@@ -14,10 +14,17 @@ type MessageRow = {
   created_at: string;
 };
 
+type OnlineUser = {
+  user_id: string;
+  username: string;
+  online_at: string;
+};
+
 const channels = ["chung", "giới-thiệu", "góp-ý", "trò-chuyện"];
 
 export default function Home() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
   const [messageInput, setMessageInput] = useState("");
   const [username, setUsername] = useState("Bạn");
   const [userId, setUserId] = useState("");
@@ -27,7 +34,14 @@ export default function Home() {
 
   useEffect(() => {
     let isActive = true;
-    let realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
+
+    let messageChannel:
+      | ReturnType<typeof supabase.channel>
+      | null = null;
+
+    let presenceChannel:
+      | ReturnType<typeof supabase.channel>
+      | null = null;
 
     async function initializeChat() {
       const {
@@ -50,6 +64,7 @@ export default function Home() {
       setUsername(displayName);
       setUserId(user.id);
 
+      // Tải tin nhắn cũ
       const { data, error } = await supabase
         .from("messages")
         .select(
@@ -67,7 +82,8 @@ export default function Home() {
         setMessages(data ?? []);
       }
 
-      realtimeChannel = supabase
+      // Nhận tin nhắn mới theo thời gian thực
+      messageChannel = supabase
         .channel("messages-chung")
         .on(
           "postgres_changes",
@@ -85,7 +101,9 @@ export default function Home() {
                 (message) => message.id === newMessage.id,
               );
 
-              if (alreadyExists) return currentMessages;
+              if (alreadyExists) {
+                return currentMessages;
+              }
 
               return [...currentMessages, newMessage];
             });
@@ -93,26 +111,86 @@ export default function Home() {
         )
         .subscribe();
 
+      // Theo dõi người đang online
+      const onlineChannel = supabase.channel("online-users-chung", {
+        config: {
+          presence: {
+            key: user.id,
+          },
+        },
+      });
+
+      onlineChannel.on("presence", { event: "sync" }, () => {
+        const presenceState = onlineChannel.presenceState();
+
+        const users = Object.values(presenceState)
+          .flat()
+          .map((presence) => presence as unknown as OnlineUser)
+          .filter(
+            (onlineUser) =>
+              onlineUser.user_id && onlineUser.username,
+          );
+
+        // Một người mở nhiều tab vẫn chỉ tính là một người
+        const uniqueUsers = Array.from(
+          new Map(
+            users.map((onlineUser) => [
+              onlineUser.user_id,
+              onlineUser,
+            ]),
+          ).values(),
+        ).sort((firstUser, secondUser) =>
+          firstUser.username.localeCompare(
+            secondUser.username,
+            "vi",
+          ),
+        );
+
+        if (isActive) {
+          setOnlineUsers(uniqueUsers);
+        }
+      });
+
+      presenceChannel = onlineChannel;
+
+      onlineChannel.subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await onlineChannel.track({
+            user_id: user.id,
+            username: displayName,
+            online_at: new Date().toISOString(),
+          });
+        }
+      });
+
       setLoading(false);
     }
 
-    initializeChat();
+    void initializeChat();
 
     return () => {
       isActive = false;
 
-      if (realtimeChannel) {
-        void supabase.removeChannel(realtimeChannel);
+      if (messageChannel) {
+        void supabase.removeChannel(messageChannel);
+      }
+
+      if (presenceChannel) {
+        void supabase.removeChannel(presenceChannel);
       }
     };
   }, []);
 
-  async function sendMessage(event: FormEvent<HTMLFormElement>) {
+  async function sendMessage(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
 
     const content = messageInput.trim();
 
-    if (!content || !userId || sending) return;
+    if (!content || !userId || sending) {
+      return;
+    }
 
     setSending(true);
     setErrorMessage("");
@@ -220,7 +298,10 @@ export default function Home() {
             <div className="truncate text-sm font-semibold">
               {username}
             </div>
-            <div className="text-xs text-gray-400">Đang online</div>
+
+            <div className="text-xs text-gray-400">
+              Đang online
+            </div>
           </div>
 
           <button
@@ -277,7 +358,9 @@ export default function Home() {
                   className="flex gap-4 rounded px-2 py-3 hover:bg-black/10"
                 >
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-500 font-bold">
-                    {message.username.charAt(0).toUpperCase()}
+                    {message.username
+                      .charAt(0)
+                      .toUpperCase()}
                   </div>
 
                   <div className="min-w-0">
@@ -285,7 +368,8 @@ export default function Home() {
                       <strong>{message.username}</strong>
 
                       <span className="text-xs text-gray-400">
-                        Hôm nay lúc {formatTime(message.created_at)}
+                        Hôm nay lúc{" "}
+                        {formatTime(message.created_at)}
                       </span>
                     </div>
 
@@ -330,21 +414,34 @@ export default function Home() {
         </form>
       </section>
 
-      {/* Thành viên online */}
+      {/* Thành viên online thật */}
       <aside className="hidden overflow-y-auto bg-[#2b2d31] p-4 lg:block">
         <h2 className="mb-3 text-xs font-bold uppercase text-gray-400">
-          Đang online — 1
+          Đang online — {onlineUsers.length}
         </h2>
 
-        <div className="mb-1 flex items-center gap-3 rounded p-2 text-gray-300 hover:bg-white/5">
-          <div className="relative flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold">
-            {username.charAt(0).toUpperCase()}
+        {onlineUsers.length === 0 ? (
+          <p className="text-sm text-gray-500">
+            Đang cập nhật...
+          </p>
+        ) : (
+          onlineUsers.map((member) => (
+            <div
+              key={member.user_id}
+              className="mb-1 flex items-center gap-3 rounded p-2 text-gray-300 hover:bg-white/5"
+            >
+              <div className="relative flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold">
+                {member.username.charAt(0).toUpperCase()}
 
-            <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] bg-green-500" />
-          </div>
+                <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] bg-green-500" />
+              </div>
 
-          <span className="truncate font-medium">{username}</span>
-        </div>
+              <span className="truncate font-medium">
+                {member.username}
+              </span>
+            </div>
+          ))
+        )}
       </aside>
     </main>
   );
