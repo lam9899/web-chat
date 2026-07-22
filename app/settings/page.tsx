@@ -29,6 +29,7 @@ export default function SettingsPage() {
   const [savingPassword, setSavingPassword] = useState(false);
   const [notice, setNotice] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -54,6 +55,16 @@ export default function SettingsPage() {
           "Bạn",
       );
       setAvatarUrl(user.user_metadata?.avatar_url || "");
+
+      const { data: roleData } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (!active) return;
+
+      setIsAdmin(roleData?.role === "admin");
       setLoading(false);
     }
 
@@ -361,6 +372,33 @@ export default function SettingsPage() {
             </button>
           </form>
         </section>
+
+
+        {isAdmin && (
+          <section className="mb-6 rounded-xl border border-red-500/20 bg-[#313338] p-6 shadow-xl">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-xl font-bold">
+                  Công cụ quản trị
+                </h2>
+
+                <p className="mt-2 text-sm text-gray-400">
+                  Kiểm tra và xóa nội dung vi phạm trong cộng đồng.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = "/admin";
+                }}
+                className="rounded-md bg-red-500 px-5 py-3 font-semibold hover:bg-red-400"
+              >
+                Mở trang quản trị
+              </button>
+            </div>
+          </section>
+        )}
 
         <section className="rounded-xl border border-red-500/20 bg-[#313338] p-6">
           <h2 className="text-xl font-bold">Phiên đăng nhập</h2>
