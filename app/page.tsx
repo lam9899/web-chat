@@ -122,13 +122,7 @@ export default function Home() {
 
   const [showChannels, setShowChannels] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
-  const [showProfile, setShowProfile] = useState(false);
-  const [profileUsername, setProfileUsername] = useState("");
-  const [profileAvatar, setProfileAvatar] = useState<File | null>(null);
-  const [savingProfile, setSavingProfile] = useState(false);
-
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const profileFileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const presenceChannelRef =
@@ -217,7 +211,6 @@ export default function Home() {
       setUserId(user.id);
       setUsername(displayName);
       setAvatarUrl(currentAvatar);
-      setProfileUsername(displayName);
 
       const onlineChannel = supabase.channel("online-users-global", {
         config: {
@@ -819,79 +812,6 @@ export default function Home() {
     }
   }
 
-  async function saveProfile() {
-    const cleanUsername = profileUsername.trim();
-
-    if (cleanUsername.length < 2 || savingProfile) {
-      setErrorMessage("Tên hiển thị phải có ít nhất 2 ký tự.");
-      return;
-    }
-
-    setSavingProfile(true);
-    setErrorMessage("");
-
-    try {
-      let newAvatarUrl = avatarUrl;
-
-      if (profileAvatar) {
-        const path = `${userId}/${Date.now()}-${safeFileName(
-          profileAvatar.name,
-        )}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from("avatars")
-          .upload(path, profileAvatar, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: profileAvatar.type,
-          });
-
-        if (uploadError) {
-          throw new Error(uploadError.message);
-        }
-
-        const { data } = supabase.storage
-          .from("avatars")
-          .getPublicUrl(path);
-
-        newAvatarUrl = data.publicUrl;
-      }
-
-      const { error } = await supabase.auth.updateUser({
-        data: {
-          username: cleanUsername,
-          avatar_url: newAvatarUrl,
-        },
-      });
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      setUsername(cleanUsername);
-      setAvatarUrl(newAvatarUrl);
-      setProfileAvatar(null);
-      setShowProfile(false);
-
-      if (presenceChannelRef.current) {
-        await presenceChannelRef.current.track({
-          user_id: userId,
-          username: cleanUsername,
-          avatar_url: newAvatarUrl,
-          online_at: new Date().toISOString(),
-        });
-      }
-    } catch (error) {
-      setErrorMessage(
-        `Không thể lưu hồ sơ: ${
-          error instanceof Error ? error.message : "Lỗi không xác định"
-        }`,
-      );
-    } finally {
-      setSavingProfile(false);
-    }
-  }
-
   async function logout() {
     await supabase.auth.signOut();
     window.location.href = "/login";
@@ -1030,8 +950,7 @@ export default function Home() {
           <button
             type="button"
             onClick={() => {
-              setProfileUsername(username);
-              setShowProfile(true);
+              window.location.href = "/settings";
             }}
             className="min-w-0 flex-1 text-left"
           >
@@ -1039,7 +958,7 @@ export default function Home() {
               {username}
             </div>
             <div className="text-xs text-gray-400">
-              Chỉnh sửa hồ sơ
+              Cài đặt tài khoản
             </div>
           </button>
 
@@ -1455,69 +1374,6 @@ export default function Home() {
         ))}
       </aside>
 
-      {/* Hồ sơ */}
-      {showProfile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-          <section className="w-full max-w-md rounded-xl bg-[#313338] p-6 shadow-2xl">
-            <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-xl font-bold">Hồ sơ của bạn</h2>
-
-              <button
-                type="button"
-                onClick={() => setShowProfile(false)}
-                className="text-gray-400 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-5">
-              <div>
-                <label className="mb-2 block text-xs font-bold uppercase text-gray-300">
-                  Tên hiển thị
-                </label>
-
-                <input
-                  value={profileUsername}
-                  onChange={(event) =>
-                    setProfileUsername(event.target.value)
-                  }
-                  minLength={2}
-                  maxLength={30}
-                  className="w-full rounded bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-bold uppercase text-gray-300">
-                  Ảnh đại diện
-                </label>
-
-                <input
-                  ref={profileFileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) =>
-                    setProfileAvatar(
-                      event.target.files?.[0] ?? null,
-                    )
-                  }
-                  className="block w-full text-sm text-gray-300"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => void saveProfile()}
-                disabled={savingProfile}
-                className="w-full rounded bg-indigo-500 py-3 font-semibold disabled:opacity-50"
-              >
-                {savingProfile ? "Đang lưu..." : "Lưu hồ sơ"}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
     </main>
   );
 }
