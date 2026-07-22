@@ -1121,6 +1121,20 @@ export default function Home() {
           </nav>
 
           <div className="mb-2 mt-6 text-xs font-bold uppercase text-gray-400">
+            Tin nhắn
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = "/messages";
+            }}
+            className="flex w-full items-center gap-2 rounded px-2 py-2 text-gray-400 hover:bg-white/5 hover:text-gray-200"
+          >
+            💬 Tin nhắn riêng
+          </button>
+
+          <div className="mb-2 mt-6 text-xs font-bold uppercase text-gray-400">
             Kênh thoại
           </div>
 
@@ -1572,9 +1586,18 @@ export default function Home() {
         </div>
 
         {onlineUsers.map((member) => (
-          <div
+          <button
             key={member.user_id}
-            className="mb-1 flex items-center gap-3 rounded p-2 text-gray-300 hover:bg-white/5"
+            type="button"
+            onClick={() => {
+              window.location.href =
+                member.user_id === userId
+                  ? "/settings"
+                  : `/messages?user=${encodeURIComponent(
+                      member.user_id,
+                    )}`;
+            }}
+            className="mb-1 flex w-full items-center gap-3 rounded p-2 text-left text-gray-300 hover:bg-white/5"
           >
             <div className="relative">
               {member.avatar_url ? (
@@ -1592,10 +1615,16 @@ export default function Home() {
               <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] bg-green-500" />
             </div>
 
-            <span className="truncate font-medium">
+            <span className="min-w-0 flex-1 truncate font-medium">
               {member.username}
             </span>
-          </div>
+
+            <span className="text-xs text-gray-500">
+              {member.user_id === userId
+                ? "Bạn"
+                : "Nhắn tin"}
+            </span>
+          </button>
         ))}
       </aside>
 
