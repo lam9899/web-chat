@@ -61,7 +61,7 @@ type SuspensionRow = {
   updated_at: string;
 };
 
-const channels: ChannelItem[] = [
+const initialChannels: ChannelItem[] = [
   {
     id: "chung",
     label: "chung",
@@ -97,6 +97,8 @@ function safeFileName(fileName: string) {
 
 export default function Home() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
+  const [channels, setChannels] =
+    useState<ChannelItem[]>(initialChannels);
   const [reactions, setReactions] = useState<ReactionRow[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
@@ -345,6 +347,76 @@ export default function Home() {
       }
     };
   }, []);
+
+
+  // Tải danh sách kênh từ database và đồng bộ theo thời gian thực.
+  useEffect(() => {
+    if (!userId) return;
+
+    let active = true;
+
+    async function loadChannels() {
+      const { data, error } = await supabase
+        .from("channels")
+        .select("slug, name, description, position")
+        .order("position", { ascending: true })
+        .order("created_at", { ascending: true });
+
+      if (!active) return;
+
+      if (error) {
+        setErrorMessage(
+          `Không thể tải danh sách kênh: ${error.message}`,
+        );
+        return;
+      }
+
+      const loadedChannels: ChannelItem[] = (data ?? []).map(
+        (channel) => ({
+          id: channel.slug,
+          label: channel.name,
+          description: channel.description,
+        }),
+      );
+
+      if (loadedChannels.length > 0) {
+        setChannels(loadedChannels);
+      }
+    }
+
+    void loadChannels();
+
+    const channelListSubscription = supabase
+      .channel(`channel-list-${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "channels",
+        },
+        () => {
+          void loadChannels();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      active = false;
+      void supabase.removeChannel(channelListSubscription);
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    if (
+      channels.length > 0 &&
+      !channels.some(
+        (channel) => channel.id === selectedChannel,
+      )
+    ) {
+      setSelectedChannel(channels[0].id);
+    }
+  }, [channels, selectedChannel]);
 
   // Tải dữ liệu và Realtime của kênh đang chọn.
   useEffect(() => {

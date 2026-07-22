@@ -26,13 +26,27 @@ type SuspensionRow = {
   updated_at: string;
 };
 
-const channelOptions = [
-  { value: "all", label: "Tất cả kênh" },
-  { value: "chung", label: "#chung" },
-  { value: "gioi-thieu", label: "#giới-thiệu" },
-  { value: "gop-y", label: "#góp-ý" },
-  { value: "tro-chuyen", label: "#trò-chuyện" },
-];
+type ChannelRow = {
+  slug: string;
+  name: string;
+  description: string;
+  position: number;
+  is_default: boolean;
+  created_by: string | null;
+  created_at: string;
+};
+
+
+function slugifyChannelName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/đ/g, "d")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
 
 function isSuspensionActive(suspension: SuspensionRow) {
   return (
@@ -44,6 +58,7 @@ function isSuspensionActive(suspension: SuspensionRow) {
 export default function AdminPage() {
   const [adminUserId, setAdminUserId] = useState("");
   const [messages, setMessages] = useState<AdminMessage[]>([]);
+  const [channels, setChannels] = useState<ChannelRow[]>([]);
   const [suspensions, setSuspensions] = useState<SuspensionRow[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedChannel, setSelectedChannel] = useState("all");
@@ -54,6 +69,12 @@ export default function AdminPage() {
     null,
   );
   const [errorMessage, setErrorMessage] = useState("");
+  const [newChannelName, setNewChannelName] = useState("");
+  const [newChannelDescription, setNewChannelDescription] =
+    useState("");
+  const [creatingChannel, setCreatingChannel] = useState(false);
+  const [deletingChannelSlug, setDeletingChannelSlug] =
+    useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -91,6 +112,7 @@ export default function AdminPage() {
       const [
         { data: messageData, error: messageError },
         { data: suspensionData, error: suspensionError },
+        { data: channelData, error: channelError },
       ] = await Promise.all([
         supabase
           .from("messages")
@@ -104,6 +126,12 @@ export default function AdminPage() {
           .select(
             "user_id, reason, suspended_until, created_by, created_at, updated_at",
           ),
+        supabase
+          .from("channels")
+          .select(
+            "slug, name, description, position, is_default, created_by, created_at",
+          )
+          .order("position", { ascending: true }),
       ]);
 
       if (!active) return;
@@ -122,6 +150,14 @@ export default function AdminPage() {
         );
       } else {
         setSuspensions(suspensionData ?? []);
+      }
+
+      if (channelError) {
+        setErrorMessage(
+          `Không thể tải danh sách kênh: ${channelError.message}`,
+        );
+      } else {
+        setChannels(channelData ?? []);
       }
 
       realtimeChannel = supabase
@@ -230,6 +266,35 @@ export default function AdminPage() {
             }
           },
         )
+
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "channels",
+          },
+          async () => {
+            if (!active) return;
+
+            const { data, error } = await supabase
+              .from("channels")
+              .select(
+                "slug, name, description, position, is_default, created_by, created_at",
+              )
+              .order("position", { ascending: true });
+
+            if (!active) return;
+
+            if (error) {
+              setErrorMessage(
+                `Không thể cập nhật danh sách kênh: ${error.message}`,
+              );
+            } else {
+              setChannels(data ?? []);
+            }
+          },
+        )
         .subscribe();
 
       setLoading(false);
@@ -281,6 +346,94 @@ export default function AdminPage() {
       );
     });
   }, [messages, searchQuery, selectedChannel]);
+
+
+  async function createChannel() {
+    const cleanName = newChannelName.trim();
+    const cleanDescription = newChannelDescription.trim();
+    const slug = slugifyChannelName(cleanName);
+
+    if (cleanName.length < 2) {
+      setErrorMessage("Tên kênh phải có ít nhất 2 ký tự.");
+      return;
+    }
+
+    if (slug.length < 2) {
+      setErrorMessage("Không thể tạo slug hợp lệ từ tên kênh.");
+      return;
+    }
+
+    setCreatingChannel(true);
+    setErrorMessage("");
+
+    const { error } = await supabase.rpc(
+      "admin_create_channel",
+      {
+        p_slug: slug,
+        p_name: cleanName,
+        p_description: cleanDescription,
+      },
+    );
+
+    if (error) {
+      setErrorMessage(`Không thể tạo kênh: ${error.message}`);
+    } else {
+      const { data, error: reloadError } = await supabase
+        .from("channels")
+        .select(
+          "slug, name, description, position, is_default, created_by, created_at",
+        )
+        .order("position", { ascending: true });
+
+      if (reloadError) {
+        setErrorMessage(
+          `Đã tạo kênh nhưng không thể tải lại: ${reloadError.message}`,
+        );
+      } else {
+        setChannels(data ?? []);
+        setNewChannelName("");
+        setNewChannelDescription("");
+      }
+    }
+
+    setCreatingChannel(false);
+  }
+
+  async function deleteChannel(channel: ChannelRow) {
+    if (channel.is_default || channel.slug === "chung") {
+      window.alert("Không thể xóa kênh mặc định.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Xóa kênh #${channel.name}?\\n\\nTin nhắn trong kênh này sẽ được chuyển về #chung.`,
+    );
+
+    if (!confirmed || deletingChannelSlug !== null) return;
+
+    setDeletingChannelSlug(channel.slug);
+    setErrorMessage("");
+
+    const { error } = await supabase.rpc(
+      "admin_delete_channel",
+      {
+        p_slug: channel.slug,
+      },
+    );
+
+    if (error) {
+      setErrorMessage(`Không thể xóa kênh: ${error.message}`);
+    } else {
+      setChannels((current) =>
+        current.filter(
+          (currentChannel) =>
+            currentChannel.slug !== channel.slug,
+        ),
+      );
+    }
+
+    setDeletingChannelSlug(null);
+  }
 
   async function deleteMessage(message: AdminMessage) {
     const confirmed = window.confirm(
@@ -515,6 +668,97 @@ export default function AdminPage() {
           </div>
         )}
 
+
+        <section className="mb-5 rounded-xl bg-[#313338] p-5 shadow">
+          <div className="mb-4">
+            <h2 className="text-xl font-bold">
+              Quản lý kênh văn bản
+            </h2>
+
+            <p className="mt-1 text-sm text-gray-400">
+              Tạo kênh mới hoặc xóa kênh không còn sử dụng.
+              Khi xóa, tin nhắn được chuyển về #chung.
+            </p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-[240px_1fr_auto]">
+            <input
+              value={newChannelName}
+              onChange={(event) =>
+                setNewChannelName(event.target.value)
+              }
+              maxLength={40}
+              placeholder="Tên kênh, ví dụ: game"
+              className="rounded-md bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
+            />
+
+            <input
+              value={newChannelDescription}
+              onChange={(event) =>
+                setNewChannelDescription(event.target.value)
+              }
+              maxLength={200}
+              placeholder="Mô tả kênh"
+              className="rounded-md bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
+            />
+
+            <button
+              type="button"
+              onClick={() => void createChannel()}
+              disabled={
+                creatingChannel ||
+                newChannelName.trim().length < 2
+              }
+              className="rounded-md bg-indigo-500 px-5 py-3 font-semibold hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {creatingChannel ? "Đang tạo..." : "Tạo kênh"}
+            </button>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {channels.map((channel) => (
+              <div
+                key={channel.slug}
+                className="flex items-center overflow-hidden rounded-md border border-white/10 bg-[#1e1f22]"
+              >
+                <div className="px-3 py-2">
+                  <div className="font-semibold">
+                    #{channel.name}
+                  </div>
+
+                  {channel.description && (
+                    <div className="max-w-64 truncate text-xs text-gray-500">
+                      {channel.description}
+                    </div>
+                  )}
+                </div>
+
+                {channel.is_default ||
+                channel.slug === "chung" ? (
+                  <span className="mr-2 rounded bg-white/10 px-2 py-1 text-xs text-gray-400">
+                    Mặc định
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void deleteChannel(channel)
+                    }
+                    disabled={
+                      deletingChannelSlug === channel.slug
+                    }
+                    className="self-stretch bg-red-500/15 px-3 text-xs font-semibold text-red-300 hover:bg-red-500/25 disabled:opacity-50"
+                  >
+                    {deletingChannelSlug === channel.slug
+                      ? "..."
+                      : "Xóa"}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+
         <section className="mb-5 grid gap-3 rounded-xl bg-[#313338] p-4 md:grid-cols-[1fr_220px_auto]">
           <input
             value={searchQuery}
@@ -532,12 +776,14 @@ export default function AdminPage() {
             }
             className="rounded-md bg-[#1e1f22] px-4 py-3 outline-none"
           >
-            {channelOptions.map((channel) => (
+            <option value="all">Tất cả kênh</option>
+
+            {channels.map((channel) => (
               <option
-                key={channel.value}
-                value={channel.value}
+                key={channel.slug}
+                value={channel.slug}
               >
-                {channel.label}
+                #{channel.name}
               </option>
             ))}
           </select>
