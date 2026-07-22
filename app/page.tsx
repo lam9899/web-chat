@@ -1,6 +1,13 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  ChangeEvent,
+  FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createClient } from "@/utils/supabase/client";
 
 const supabase = createClient();
@@ -12,11 +19,24 @@ type MessageRow = {
   content: string;
   channel: string;
   created_at: string;
+  reply_to_id: number | null;
+  attachment_url: string | null;
+  attachment_name: string | null;
+  edited_at: string | null;
+};
+
+type ReactionRow = {
+  message_id: number;
+  user_id: string;
+  username: string;
+  emoji: string;
+  created_at: string;
 };
 
 type OnlineUser = {
   user_id: string;
   username: string;
+  avatar_url?: string;
   online_at: string;
 };
 
@@ -24,6 +44,12 @@ type ChannelItem = {
   id: string;
   label: string;
   description: string;
+};
+
+type TypingPayload = {
+  user_id: string;
+  username: string;
+  typing: boolean;
 };
 
 const channels: ChannelItem[] = [
@@ -49,25 +75,70 @@ const channels: ChannelItem[] = [
   },
 ];
 
+const reactionChoices = ["👍", "❤️", "😂", "😮"];
+
+function safeFileName(fileName: string) {
+  return fileName
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .toLowerCase();
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
+  const [reactions, setReactions] = useState<ReactionRow[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(
+    {},
+  );
+
   const [selectedChannel, setSelectedChannel] = useState("chung");
   const [messageInput, setMessageInput] = useState("");
-  const [username, setUsername] = useState("Bạn");
-  const [userId, setUserId] = useState("");
-  const [authLoading, setAuthLoading] = useState(true);
-  const [messagesLoading, setMessagesLoading] = useState(true);
-  const [sending, setSending] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
+  const [username, setUsername] = useState("Bạn");
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [userId, setUserId] = useState("");
+
+  const [replyingTo, setReplyingTo] = useState<MessageRow | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<number | null>(
     null,
   );
   const [editingContent, setEditingContent] = useState("");
+
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
+  const [attachmentPreview, setAttachmentPreview] = useState("");
+
+  const [authLoading, setAuthLoading] = useState(true);
+  const [messagesLoading, setMessagesLoading] = useState(true);
+  const [sending, setSending] = useState(false);
   const [actionMessageId, setActionMessageId] = useState<number | null>(
     null,
   );
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const [showChannels, setShowChannels] = useState(false);
+  const [showMembers, setShowMembers] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [profileUsername, setProfileUsername] = useState("");
+  const [profileAvatar, setProfileAvatar] = useState<File | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const profileFileInputRef = useRef<HTMLInputElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  const presenceChannelRef =
+    useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const roomChannelRef =
+    useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const typingStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const lastTypingSentRef = useRef(0);
 
   const activeChannel = useMemo(
     () =>
@@ -76,20 +147,61 @@ export default function Home() {
     [selectedChannel],
   );
 
-  // Kiểm tra đăng nhập và theo dõi danh sách online.
+  const messageById = useMemo(
+    () => new Map(messages.map((message) => [message.id, message])),
+    [messages],
+  );
+
+  const filteredMessages = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase("vi");
+
+    if (!query) return messages;
+
+    return messages.filter((message) => {
+      return (
+        message.content.toLocaleLowerCase("vi").includes(query) ||
+        message.username.toLocaleLowerCase("vi").includes(query)
+      );
+    });
+  }, [messages, searchQuery]);
+
+  const reactionsByMessage = useMemo(() => {
+    const grouped = new Map<
+      number,
+      Map<string, { count: number; mine: boolean }>
+    >();
+
+    for (const reaction of reactions) {
+      if (!grouped.has(reaction.message_id)) {
+        grouped.set(reaction.message_id, new Map());
+      }
+
+      const messageReactions = grouped.get(reaction.message_id)!;
+      const current = messageReactions.get(reaction.emoji) ?? {
+        count: 0,
+        mine: false,
+      };
+
+      messageReactions.set(reaction.emoji, {
+        count: current.count + 1,
+        mine: current.mine || reaction.user_id === userId,
+      });
+    }
+
+    return grouped;
+  }, [reactions, userId]);
+
+  // Xác thực và Presence online toàn website.
   useEffect(() => {
     let isActive = true;
-    let presenceChannel:
-      | ReturnType<typeof supabase.channel>
-      | null = null;
 
     async function initializeUser() {
       const {
         data: { user },
-        error: userError,
+        error,
       } = await supabase.auth.getUser();
 
-      if (userError || !user) {
+      if (error || !user) {
         window.location.href = "/login";
         return;
       }
@@ -98,11 +210,14 @@ export default function Home() {
         user.user_metadata?.username ||
         user.email?.split("@")[0] ||
         "Bạn";
+      const currentAvatar = user.user_metadata?.avatar_url || "";
 
       if (!isActive) return;
 
-      setUsername(displayName);
       setUserId(user.id);
+      setUsername(displayName);
+      setAvatarUrl(currentAvatar);
+      setProfileUsername(displayName);
 
       const onlineChannel = supabase.channel("online-users-global", {
         config: {
@@ -118,18 +233,11 @@ export default function Home() {
         const users = Object.values(presenceState)
           .flat()
           .map((presence) => presence as unknown as OnlineUser)
-          .filter(
-            (onlineUser) =>
-              Boolean(onlineUser.user_id) &&
-              Boolean(onlineUser.username),
-          );
+          .filter((member) => member.user_id && member.username);
 
         const uniqueUsers = Array.from(
           new Map(
-            users.map((onlineUser) => [
-              onlineUser.user_id,
-              onlineUser,
-            ]),
+            users.map((member) => [member.user_id, member]),
           ).values(),
         ).sort((firstUser, secondUser) =>
           firstUser.username.localeCompare(
@@ -143,13 +251,14 @@ export default function Home() {
         }
       });
 
-      presenceChannel = onlineChannel;
+      presenceChannelRef.current = onlineChannel;
 
       onlineChannel.subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await onlineChannel.track({
             user_id: user.id,
             username: displayName,
+            avatar_url: currentAvatar,
             online_at: new Date().toISOString(),
           });
         }
@@ -163,139 +272,359 @@ export default function Home() {
     return () => {
       isActive = false;
 
-      if (presenceChannel) {
-        void supabase.removeChannel(presenceChannel);
+      if (presenceChannelRef.current) {
+        void supabase.removeChannel(presenceChannelRef.current);
+        presenceChannelRef.current = null;
       }
     };
   }, []);
 
-  // Tải và theo dõi tin nhắn riêng của kênh đang chọn.
+  // Tải dữ liệu và Realtime của kênh đang chọn.
   useEffect(() => {
     if (!userId) return;
 
     let isActive = true;
-    let messageChannel:
-      | ReturnType<typeof supabase.channel>
-      | null = null;
 
-    async function initializeChannelMessages() {
+    async function initializeRoom() {
       setMessagesLoading(true);
       setMessages([]);
-      setErrorMessage("");
+      setReactions([]);
+      setTypingUsers([]);
       setMessageInput("");
+      setReplyingTo(null);
       setEditingMessageId(null);
       setEditingContent("");
+      setErrorMessage("");
 
-      const { data, error } = await supabase
+      const { data: messageData, error: messageError } = await supabase
         .from("messages")
         .select(
-          "id, user_id, username, content, channel, created_at",
+          "id, user_id, username, content, channel, created_at, reply_to_id, attachment_url, attachment_name, edited_at",
         )
         .eq("channel", selectedChannel)
         .order("created_at", { ascending: true })
-        .limit(100);
+        .limit(150);
 
       if (!isActive) return;
 
-      if (error) {
-        setErrorMessage(`Không thể tải tin nhắn: ${error.message}`);
+      if (messageError) {
+        setErrorMessage(
+          `Không thể tải tin nhắn: ${messageError.message}`,
+        );
       } else {
-        setMessages(data ?? []);
+        const loadedMessages = messageData ?? [];
+        setMessages(loadedMessages);
+
+        const messageIds = loadedMessages.map((message) => message.id);
+
+        if (messageIds.length > 0) {
+          const { data: reactionData, error: reactionError } =
+            await supabase
+              .from("message_reactions")
+              .select(
+                "message_id, user_id, username, emoji, created_at",
+              )
+              .in("message_id", messageIds);
+
+          if (!isActive) return;
+
+          if (reactionError) {
+            setErrorMessage(
+              `Không thể tải reaction: ${reactionError.message}`,
+            );
+          } else {
+            setReactions(reactionData ?? []);
+          }
+        }
       }
 
-      const subscriptionName = [
-        "messages",
-        selectedChannel,
-        userId,
-        Date.now().toString(),
-      ].join("-");
-
-      messageChannel = supabase
-        .channel(subscriptionName)
+      const roomChannel = supabase
+        .channel(`room:${selectedChannel}:${userId}:${Date.now()}`, {
+          config: {
+            broadcast: {
+              self: false,
+            },
+          },
+        })
         .on(
           "postgres_changes",
           {
-            event: "INSERT",
+            event: "*",
             schema: "public",
             table: "messages",
-            filter: `channel=eq.${selectedChannel}`,
           },
           (payload) => {
             if (!isActive) return;
 
-            const newMessage = payload.new as MessageRow;
+            if (payload.eventType === "INSERT") {
+              const newMessage = payload.new as MessageRow;
 
-            setMessages((currentMessages) => {
-              const alreadyExists = currentMessages.some(
-                (message) => message.id === newMessage.id,
+              if (newMessage.channel === selectedChannel) {
+                setMessages((currentMessages) => {
+                  if (
+                    currentMessages.some(
+                      (message) => message.id === newMessage.id,
+                    )
+                  ) {
+                    return currentMessages;
+                  }
+
+                  return [...currentMessages, newMessage];
+                });
+              } else {
+                setUnreadCounts((currentCounts) => ({
+                  ...currentCounts,
+                  [newMessage.channel]:
+                    (currentCounts[newMessage.channel] ?? 0) + 1,
+                }));
+              }
+            }
+
+            if (payload.eventType === "UPDATE") {
+              const updatedMessage = payload.new as MessageRow;
+
+              if (updatedMessage.channel === selectedChannel) {
+                setMessages((currentMessages) =>
+                  currentMessages.map((message) =>
+                    message.id === updatedMessage.id
+                      ? updatedMessage
+                      : message,
+                  ),
+                );
+              }
+            }
+
+            if (payload.eventType === "DELETE") {
+              const deletedMessage = payload.old as Partial<MessageRow>;
+
+              if (typeof deletedMessage.id === "number") {
+                setMessages((currentMessages) =>
+                  currentMessages.filter(
+                    (message) => message.id !== deletedMessage.id,
+                  ),
+                );
+                setReactions((currentReactions) =>
+                  currentReactions.filter(
+                    (reaction) =>
+                      reaction.message_id !== deletedMessage.id,
+                  ),
+                );
+              }
+            }
+          },
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "message_reactions",
+          },
+          (payload) => {
+            if (!isActive) return;
+
+            if (payload.eventType === "INSERT") {
+              const newReaction = payload.new as ReactionRow;
+
+              setReactions((currentReactions) => {
+                const exists = currentReactions.some(
+                  (reaction) =>
+                    reaction.message_id === newReaction.message_id &&
+                    reaction.user_id === newReaction.user_id &&
+                    reaction.emoji === newReaction.emoji,
+                );
+
+                return exists
+                  ? currentReactions
+                  : [...currentReactions, newReaction];
+              });
+            }
+
+            if (payload.eventType === "DELETE") {
+              const oldReaction = payload.old as Partial<ReactionRow>;
+
+              setReactions((currentReactions) =>
+                currentReactions.filter(
+                  (reaction) =>
+                    !(
+                      reaction.message_id === oldReaction.message_id &&
+                      reaction.user_id === oldReaction.user_id &&
+                      reaction.emoji === oldReaction.emoji
+                    ),
+                ),
               );
+            }
+          },
+        )
+        .on(
+          "broadcast",
+          {
+            event: "typing",
+          },
+          ({ payload }) => {
+            const typingPayload = payload as TypingPayload;
 
-              if (alreadyExists) {
-                return currentMessages;
+            if (
+              !typingPayload.user_id ||
+              typingPayload.user_id === userId
+            ) {
+              return;
+            }
+
+            setTypingUsers((currentUsers) => {
+              if (typingPayload.typing) {
+                return Array.from(
+                  new Set([...currentUsers, typingPayload.username]),
+                );
               }
 
-              return [...currentMessages, newMessage];
+              return currentUsers.filter(
+                (name) => name !== typingPayload.username,
+              );
             });
           },
-        )
-        .on(
-          "postgres_changes",
-          {
-            event: "UPDATE",
-            schema: "public",
-            table: "messages",
-            filter: `channel=eq.${selectedChannel}`,
-          },
-          (payload) => {
-            if (!isActive) return;
+        );
 
-            const updatedMessage = payload.new as MessageRow;
+      roomChannelRef.current = roomChannel;
+      roomChannel.subscribe();
 
-            setMessages((currentMessages) =>
-              currentMessages.map((message) =>
-                message.id === updatedMessage.id
-                  ? updatedMessage
-                  : message,
-              ),
-            );
-          },
-        )
-        .on(
-          "postgres_changes",
-          {
-            event: "DELETE",
-            schema: "public",
-            table: "messages",
-          },
-          (payload) => {
-            if (!isActive) return;
-
-            const deletedMessage = payload.old as Partial<MessageRow>;
-
-            if (typeof deletedMessage.id !== "number") return;
-
-            setMessages((currentMessages) =>
-              currentMessages.filter(
-                (message) => message.id !== deletedMessage.id,
-              ),
-            );
-          },
-        )
-        .subscribe();
-
+      setUnreadCounts((currentCounts) => ({
+        ...currentCounts,
+        [selectedChannel]: 0,
+      }));
       setMessagesLoading(false);
     }
 
-    void initializeChannelMessages();
+    void initializeRoom();
 
     return () => {
       isActive = false;
 
-      if (messageChannel) {
-        void supabase.removeChannel(messageChannel);
+      if (typingStopTimerRef.current) {
+        clearTimeout(typingStopTimerRef.current);
+      }
+
+      if (roomChannelRef.current) {
+        void supabase.removeChannel(roomChannelRef.current);
+        roomChannelRef.current = null;
       }
     };
   }, [selectedChannel, userId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+    });
+  }, [messages.length]);
+
+  function announceTyping(value: string) {
+    const roomChannel = roomChannelRef.current;
+
+    if (!roomChannel || !userId) return;
+
+    const now = Date.now();
+
+    if (value.trim() && now - lastTypingSentRef.current > 600) {
+      lastTypingSentRef.current = now;
+
+      void roomChannel.send({
+        type: "broadcast",
+        event: "typing",
+        payload: {
+          user_id: userId,
+          username,
+          typing: true,
+        } satisfies TypingPayload,
+      });
+    }
+
+    if (typingStopTimerRef.current) {
+      clearTimeout(typingStopTimerRef.current);
+    }
+
+    typingStopTimerRef.current = setTimeout(() => {
+      void roomChannel.send({
+        type: "broadcast",
+        event: "typing",
+        payload: {
+          user_id: userId,
+          username,
+          typing: false,
+        } satisfies TypingPayload,
+      });
+    }, 1200);
+  }
+
+  function handleMessageInput(event: ChangeEvent<HTMLInputElement>) {
+    setMessageInput(event.target.value);
+    announceTyping(event.target.value);
+  }
+
+  function selectChannel(channelId: string) {
+    setSelectedChannel(channelId);
+    setShowChannels(false);
+  }
+
+  function chooseAttachment(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setErrorMessage("Hiện tại chỉ hỗ trợ gửi file ảnh.");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setErrorMessage("Ảnh phải nhỏ hơn hoặc bằng 5 MB.");
+      event.target.value = "";
+      return;
+    }
+
+    if (attachmentPreview) {
+      URL.revokeObjectURL(attachmentPreview);
+    }
+
+    setAttachmentFile(file);
+    setAttachmentPreview(URL.createObjectURL(file));
+    setErrorMessage("");
+  }
+
+  function clearAttachment() {
+    if (attachmentPreview) {
+      URL.revokeObjectURL(attachmentPreview);
+    }
+
+    setAttachmentFile(null);
+    setAttachmentPreview("");
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  async function uploadChatImage(file: File) {
+    const path = `${userId}/${Date.now()}-${safeFileName(file.name)}`;
+
+    const { error } = await supabase.storage
+      .from("chat-files")
+      .upload(path, file, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: file.type,
+      });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const { data } = supabase.storage
+      .from("chat-files")
+      .getPublicUrl(path);
+
+    return data.publicUrl;
+  }
 
   async function sendMessage(
     event: FormEvent<HTMLFormElement>,
@@ -304,27 +633,51 @@ export default function Home() {
 
     const content = messageInput.trim();
 
-    if (!content || !userId || sending) {
+    if (
+      (!content && !attachmentFile) ||
+      !userId ||
+      sending
+    ) {
       return;
     }
 
     setSending(true);
     setErrorMessage("");
 
-    const { error } = await supabase.from("messages").insert({
-      user_id: userId,
-      username,
-      content,
-      channel: selectedChannel,
-    });
+    try {
+      let uploadedUrl: string | null = null;
 
-    if (error) {
-      setErrorMessage(`Không thể gửi tin nhắn: ${error.message}`);
-    } else {
+      if (attachmentFile) {
+        uploadedUrl = await uploadChatImage(attachmentFile);
+      }
+
+      const { error } = await supabase.from("messages").insert({
+        user_id: userId,
+        username,
+        content,
+        channel: selectedChannel,
+        reply_to_id: replyingTo?.id ?? null,
+        attachment_url: uploadedUrl,
+        attachment_name: attachmentFile?.name ?? null,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
       setMessageInput("");
+      setReplyingTo(null);
+      clearAttachment();
+      announceTyping("");
+    } catch (error) {
+      setErrorMessage(
+        `Không thể gửi tin nhắn: ${
+          error instanceof Error ? error.message : "Lỗi không xác định"
+        }`,
+      );
+    } finally {
+      setSending(false);
     }
-
-    setSending(false);
   }
 
   function beginEditing(message: MessageRow) {
@@ -352,6 +705,7 @@ export default function Home() {
       .from("messages")
       .update({
         content: cleanContent,
+        edited_at: new Date().toISOString(),
       })
       .eq("id", messageId)
       .eq("user_id", userId);
@@ -359,15 +713,17 @@ export default function Home() {
     if (error) {
       setErrorMessage(`Không thể sửa tin nhắn: ${error.message}`);
     } else {
-      // Cập nhật ngay trên máy; Realtime sẽ đồng bộ cho người khác.
       setMessages((currentMessages) =>
         currentMessages.map((message) =>
           message.id === messageId
-            ? { ...message, content: cleanContent }
+            ? {
+                ...message,
+                content: cleanContent,
+                edited_at: new Date().toISOString(),
+              }
             : message,
         ),
       );
-
       cancelEditing();
     }
 
@@ -375,11 +731,10 @@ export default function Home() {
   }
 
   async function deleteMessage(messageId: number) {
-    const shouldDelete = window.confirm(
-      "Bạn có chắc muốn xóa tin nhắn này không?",
-    );
-
-    if (!shouldDelete || actionMessageId !== null) {
+    if (
+      !window.confirm("Bạn có chắc muốn xóa tin nhắn này không?") ||
+      actionMessageId !== null
+    ) {
       return;
     }
 
@@ -395,19 +750,146 @@ export default function Home() {
     if (error) {
       setErrorMessage(`Không thể xóa tin nhắn: ${error.message}`);
     } else {
-      // Xóa ngay trên máy; Realtime sẽ đồng bộ cho người khác.
       setMessages((currentMessages) =>
         currentMessages.filter(
           (message) => message.id !== messageId,
         ),
       );
-
-      if (editingMessageId === messageId) {
-        cancelEditing();
-      }
     }
 
     setActionMessageId(null);
+  }
+
+  async function toggleReaction(messageId: number, emoji: string) {
+    const existing = reactions.some(
+      (reaction) =>
+        reaction.message_id === messageId &&
+        reaction.user_id === userId &&
+        reaction.emoji === emoji,
+    );
+
+    if (existing) {
+      const { error } = await supabase
+        .from("message_reactions")
+        .delete()
+        .eq("message_id", messageId)
+        .eq("user_id", userId)
+        .eq("emoji", emoji);
+
+      if (error) {
+        setErrorMessage(`Không thể bỏ reaction: ${error.message}`);
+      } else {
+        setReactions((currentReactions) =>
+          currentReactions.filter(
+            (reaction) =>
+              !(
+                reaction.message_id === messageId &&
+                reaction.user_id === userId &&
+                reaction.emoji === emoji
+              ),
+          ),
+        );
+      }
+
+      return;
+    }
+
+    const { error } = await supabase
+      .from("message_reactions")
+      .insert({
+        message_id: messageId,
+        user_id: userId,
+        username,
+        emoji,
+      });
+
+    if (error) {
+      setErrorMessage(`Không thể thêm reaction: ${error.message}`);
+    } else {
+      setReactions((currentReactions) => [
+        ...currentReactions,
+        {
+          message_id: messageId,
+          user_id: userId,
+          username,
+          emoji,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    }
+  }
+
+  async function saveProfile() {
+    const cleanUsername = profileUsername.trim();
+
+    if (cleanUsername.length < 2 || savingProfile) {
+      setErrorMessage("Tên hiển thị phải có ít nhất 2 ký tự.");
+      return;
+    }
+
+    setSavingProfile(true);
+    setErrorMessage("");
+
+    try {
+      let newAvatarUrl = avatarUrl;
+
+      if (profileAvatar) {
+        const path = `${userId}/${Date.now()}-${safeFileName(
+          profileAvatar.name,
+        )}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("avatars")
+          .upload(path, profileAvatar, {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: profileAvatar.type,
+          });
+
+        if (uploadError) {
+          throw new Error(uploadError.message);
+        }
+
+        const { data } = supabase.storage
+          .from("avatars")
+          .getPublicUrl(path);
+
+        newAvatarUrl = data.publicUrl;
+      }
+
+      const { error } = await supabase.auth.updateUser({
+        data: {
+          username: cleanUsername,
+          avatar_url: newAvatarUrl,
+        },
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setUsername(cleanUsername);
+      setAvatarUrl(newAvatarUrl);
+      setProfileAvatar(null);
+      setShowProfile(false);
+
+      if (presenceChannelRef.current) {
+        await presenceChannelRef.current.track({
+          user_id: userId,
+          username: cleanUsername,
+          avatar_url: newAvatarUrl,
+          online_at: new Date().toISOString(),
+        });
+      }
+    } catch (error) {
+      setErrorMessage(
+        `Không thể lưu hồ sơ: ${
+          error instanceof Error ? error.message : "Lỗi không xác định"
+        }`,
+      );
+    } finally {
+      setSavingProfile(false);
+    }
   }
 
   async function logout() {
@@ -431,9 +913,27 @@ export default function Home() {
   }
 
   return (
-    <main className="grid h-screen grid-cols-[72px_240px_minmax(0,1fr)] overflow-hidden bg-[#313338] text-white lg:grid-cols-[72px_240px_minmax(0,1fr)_240px]">
-      {/* Danh sách máy chủ */}
-      <aside className="flex flex-col items-center gap-3 bg-[#1e1f22] py-3">
+    <main className="relative grid h-screen grid-cols-1 overflow-hidden bg-[#313338] text-white md:grid-cols-[72px_240px_minmax(0,1fr)] lg:grid-cols-[72px_240px_minmax(0,1fr)_240px]">
+      {showChannels && (
+        <button
+          type="button"
+          aria-label="Đóng danh sách kênh"
+          onClick={() => setShowChannels(false)}
+          className="fixed inset-0 z-30 bg-black/50 md:hidden"
+        />
+      )}
+
+      {showMembers && (
+        <button
+          type="button"
+          aria-label="Đóng danh sách thành viên"
+          onClick={() => setShowMembers(false)}
+          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+        />
+      )}
+
+      {/* Máy chủ */}
+      <aside className="hidden flex-col items-center gap-3 bg-[#1e1f22] py-3 md:flex">
         <button className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500 text-xl font-bold">
           T
         </button>
@@ -450,27 +950,40 @@ export default function Home() {
         ))}
       </aside>
 
-      {/* Danh sách kênh */}
-      <aside className="flex min-h-0 flex-col bg-[#2b2d31]">
-        <header className="border-b border-black/20 px-4 py-4 font-bold shadow">
-          Talk Cùng Lâm DZ
+      {/* Kênh */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex w-[280px] min-h-0 flex-col bg-[#2b2d31] transition-transform md:static md:w-auto md:translate-x-0 ${
+          showChannels ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <header className="flex items-center justify-between border-b border-black/20 px-4 py-4 font-bold shadow">
+          <span>Talk Cùng Lâm DZ</span>
+
+          <button
+            type="button"
+            onClick={() => setShowChannels(false)}
+            className="text-gray-400 md:hidden"
+          >
+            ✕
+          </button>
         </header>
 
         <div className="flex-1 overflow-y-auto p-3">
           <div className="mb-2 flex items-center justify-between text-xs font-bold uppercase text-gray-400">
             <span>Kênh văn bản</span>
-            <button className="text-lg">+</button>
+            <span>+</span>
           </div>
 
           <nav className="space-y-1">
             {channels.map((channel) => {
               const isSelected = channel.id === selectedChannel;
+              const unread = unreadCounts[channel.id] ?? 0;
 
               return (
                 <button
                   key={channel.id}
                   type="button"
-                  onClick={() => setSelectedChannel(channel.id)}
+                  onClick={() => selectChannel(channel.id)}
                   className={`flex w-full items-center gap-2 rounded px-2 py-2 text-left ${
                     isSelected
                       ? "bg-white/10 text-white"
@@ -478,15 +991,22 @@ export default function Home() {
                   }`}
                 >
                   <span className="text-xl text-gray-400">#</span>
-                  {channel.label}
+                  <span className="min-w-0 flex-1 truncate">
+                    {channel.label}
+                  </span>
+
+                  {unread > 0 && (
+                    <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold text-white">
+                      {unread > 99 ? "99+" : unread}
+                    </span>
+                  )}
                 </button>
               );
             })}
           </nav>
 
-          <div className="mb-2 mt-6 flex items-center justify-between text-xs font-bold uppercase text-gray-400">
-            <span>Kênh thoại</span>
-            <button className="text-lg">+</button>
+          <div className="mb-2 mt-6 text-xs font-bold uppercase text-gray-400">
+            Kênh thoại
           </div>
 
           <button className="flex w-full items-center gap-2 rounded px-2 py-2 text-gray-400 hover:bg-white/5">
@@ -495,19 +1015,33 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-3 bg-[#232428] p-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold">
-            {username.charAt(0).toUpperCase()}
-          </div>
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt={username}
+              className="h-9 w-9 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold">
+              {username.charAt(0).toUpperCase()}
+            </div>
+          )}
 
-          <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={() => {
+              setProfileUsername(username);
+              setShowProfile(true);
+            }}
+            className="min-w-0 flex-1 text-left"
+          >
             <div className="truncate text-sm font-semibold">
               {username}
             </div>
-
             <div className="text-xs text-gray-400">
-              Đang online
+              Chỉnh sửa hồ sơ
             </div>
-          </div>
+          </button>
 
           <button
             onClick={logout}
@@ -519,24 +1053,47 @@ export default function Home() {
         </div>
       </aside>
 
-      {/* Khu vực trò chuyện */}
+      {/* Chat */}
       <section className="flex min-w-0 flex-col">
-        <header className="flex h-[57px] items-center border-b border-black/20 px-4 shadow">
-          <span className="mr-2 text-2xl text-gray-400">#</span>
+        <header className="flex h-[57px] items-center gap-3 border-b border-black/20 px-3 shadow md:px-4">
+          <button
+            type="button"
+            onClick={() => setShowChannels(true)}
+            className="rounded p-1 text-xl text-gray-300 md:hidden"
+          >
+            ☰
+          </button>
+
+          <span className="text-2xl text-gray-400">#</span>
           <strong>{activeChannel.label}</strong>
 
-          <span className="ml-4 hidden text-sm text-gray-400 md:block">
+          <span className="hidden min-w-0 flex-1 truncate text-sm text-gray-400 sm:block">
             {activeChannel.description}
           </span>
+
+          <input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Tìm tin nhắn"
+            className="ml-auto hidden w-40 rounded bg-[#1e1f22] px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-indigo-500 sm:block"
+          />
+
+          <button
+            type="button"
+            onClick={() => setShowMembers(true)}
+            className="rounded p-1 text-xl text-gray-300 lg:hidden"
+          >
+            👥
+          </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-5 py-5">
+        <div className="flex-1 overflow-y-auto px-3 py-5 md:px-5">
           <div className="mb-8">
             <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-[#41434a] text-4xl">
               #
             </div>
 
-            <h1 className="text-3xl font-bold">
+            <h1 className="text-2xl font-bold md:text-3xl">
               Chào mừng đến với #{activeChannel.label}!
             </h1>
 
@@ -555,39 +1112,59 @@ export default function Home() {
             <p className="text-sm text-gray-400">
               Đang tải tin nhắn...
             </p>
-          ) : messages.length === 0 ? (
+          ) : filteredMessages.length === 0 ? (
             <p className="text-sm text-gray-400">
-              Chưa có tin nhắn. Hãy gửi tin nhắn đầu tiên.
+              {searchQuery
+                ? "Không tìm thấy tin nhắn phù hợp."
+                : "Chưa có tin nhắn. Hãy gửi tin nhắn đầu tiên."}
             </p>
           ) : (
             <div className="space-y-1">
-              {messages.map((message) => {
+              {filteredMessages.map((message) => {
                 const isOwnMessage = message.user_id === userId;
                 const isEditing =
                   editingMessageId === message.id;
                 const isWorking =
                   actionMessageId === message.id;
+                const repliedMessage = message.reply_to_id
+                  ? messageById.get(message.reply_to_id)
+                  : undefined;
+                const messageReactions =
+                  reactionsByMessage.get(message.id);
 
                 return (
                   <article
                     key={message.id}
-                    className="group relative flex gap-4 rounded px-2 py-3 hover:bg-black/10"
+                    className="group relative flex gap-3 rounded px-2 py-3 hover:bg-black/10 md:gap-4"
                   >
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-500 font-bold">
-                      {message.username
-                        .charAt(0)
-                        .toUpperCase()}
+                      {message.username.charAt(0).toUpperCase()}
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline gap-2">
+                      <div className="flex flex-wrap items-baseline gap-x-2">
                         <strong>{message.username}</strong>
 
                         <span className="text-xs text-gray-400">
-                          Hôm nay lúc{" "}
                           {formatTime(message.created_at)}
                         </span>
+
+                        {message.edited_at && (
+                          <span className="text-xs text-gray-500">
+                            (đã sửa)
+                          </span>
+                        )}
                       </div>
+
+                      {repliedMessage && (
+                        <button
+                          type="button"
+                          className="mt-1 block max-w-full truncate border-l-2 border-indigo-400 pl-2 text-left text-xs text-gray-400"
+                        >
+                          Trả lời {repliedMessage.username}:{" "}
+                          {repliedMessage.content || "Ảnh đính kèm"}
+                        </button>
+                      )}
 
                       {isEditing ? (
                         <div className="mt-2">
@@ -599,7 +1176,7 @@ export default function Home() {
                             maxLength={2000}
                             rows={2}
                             autoFocus
-                            className="w-full resize-none rounded-md bg-[#1e1f22] px-3 py-2 text-gray-100 outline-none ring-indigo-500 focus:ring-2"
+                            className="w-full resize-none rounded-md bg-[#1e1f22] px-3 py-2 outline-none ring-indigo-500 focus:ring-2"
                           />
 
                           <div className="mt-2 flex gap-2">
@@ -612,7 +1189,7 @@ export default function Home() {
                                 isWorking ||
                                 !editingContent.trim()
                               }
-                              className="rounded bg-indigo-500 px-3 py-1.5 text-xs font-semibold hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="rounded bg-indigo-500 px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                             >
                               {isWorking
                                 ? "Đang lưu..."
@@ -622,110 +1199,325 @@ export default function Home() {
                             <button
                               type="button"
                               onClick={cancelEditing}
-                              disabled={isWorking}
-                              className="rounded bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15 disabled:opacity-50"
+                              className="rounded bg-white/10 px-3 py-1.5 text-xs font-semibold"
                             >
                               Hủy
                             </button>
                           </div>
                         </div>
                       ) : (
-                        <p className="mt-1 break-words text-gray-200">
-                          {message.content}
-                        </p>
+                        <>
+                          {message.content && (
+                            <p className="mt-1 whitespace-pre-wrap break-words text-gray-200">
+                              {message.content}
+                            </p>
+                          )}
+
+                          {message.attachment_url && (
+                            <a
+                              href={message.attachment_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 block max-w-xl"
+                            >
+                              <img
+                                src={message.attachment_url}
+                                alt={
+                                  message.attachment_name ??
+                                  "Ảnh đính kèm"
+                                }
+                                className="max-h-80 rounded-lg object-contain"
+                              />
+                            </a>
+                          )}
+                        </>
+                      )}
+
+                      {!isEditing && (
+                        <div className="mt-2 flex flex-wrap items-center gap-1">
+                          {messageReactions &&
+                            Array.from(messageReactions.entries()).map(
+                              ([emoji, reaction]) => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() =>
+                                    void toggleReaction(
+                                      message.id,
+                                      emoji,
+                                    )
+                                  }
+                                  className={`rounded-full border px-2 py-0.5 text-xs ${
+                                    reaction.mine
+                                      ? "border-indigo-400 bg-indigo-500/20"
+                                      : "border-white/10 bg-white/5"
+                                  }`}
+                                >
+                                  {emoji} {reaction.count}
+                                </button>
+                              ),
+                            )}
+
+                          <div className="hidden gap-1 group-hover:flex">
+                            {reactionChoices.map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                onClick={() =>
+                                  void toggleReaction(
+                                    message.id,
+                                    emoji,
+                                  )
+                                }
+                                className="rounded px-1.5 py-0.5 text-xs hover:bg-white/10"
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
 
-                    {isOwnMessage && !isEditing && (
+                    {!isEditing && (
                       <div className="absolute right-2 top-2 hidden overflow-hidden rounded-md border border-black/20 bg-[#2b2d31] shadow-lg group-hover:flex">
                         <button
                           type="button"
-                          onClick={() => beginEditing(message)}
-                          disabled={isWorking}
-                          className="px-3 py-1.5 text-xs text-gray-300 hover:bg-white/10 hover:text-white disabled:opacity-50"
+                          onClick={() => setReplyingTo(message)}
+                          className="px-2 py-1.5 text-xs text-gray-300 hover:bg-white/10"
                         >
-                          Sửa
+                          Trả lời
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void deleteMessage(message.id)
-                          }
-                          disabled={isWorking}
-                          className="px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/15 disabled:opacity-50"
-                        >
-                          {isWorking ? "..." : "Xóa"}
-                        </button>
+                        {isOwnMessage && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => beginEditing(message)}
+                              className="px-2 py-1.5 text-xs text-gray-300 hover:bg-white/10"
+                            >
+                              Sửa
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void deleteMessage(message.id)
+                              }
+                              disabled={isWorking}
+                              className="px-2 py-1.5 text-xs text-red-300 hover:bg-red-500/15"
+                            >
+                              Xóa
+                            </button>
+                          </>
+                        )}
                       </div>
                     )}
                   </article>
                 );
               })}
+
+              <div ref={messagesEndRef} />
             </div>
           )}
         </div>
 
-        <form onSubmit={sendMessage} className="px-4 pb-6">
-          <div className="flex items-center rounded-lg bg-[#383a40] px-4">
-            <button
-              type="button"
-              className="mr-3 text-2xl text-gray-300 hover:text-white"
-              title="Đính kèm"
-            >
-              +
-            </button>
+        <div className="px-3 pb-2 md:px-4">
+          {typingUsers.length > 0 && (
+            <p className="mb-1 text-xs text-gray-400">
+              {typingUsers.slice(0, 2).join(", ")}
+              {typingUsers.length > 2
+                ? ` và ${typingUsers.length - 2} người khác`
+                : ""}{" "}
+              đang nhập...
+            </p>
+          )}
 
-            <input
-              value={messageInput}
-              onChange={(event) =>
-                setMessageInput(event.target.value)
-              }
-              placeholder={`Nhắn tin trong #${activeChannel.label}`}
-              maxLength={2000}
-              className="min-w-0 flex-1 bg-transparent py-3 text-gray-100 outline-none placeholder:text-gray-400"
-            />
+          {replyingTo && (
+            <div className="flex items-center justify-between rounded-t-lg bg-[#2b2d31] px-4 py-2 text-xs text-gray-300">
+              <span className="truncate">
+                Đang trả lời <strong>{replyingTo.username}</strong>:{" "}
+                {replyingTo.content || "Ảnh đính kèm"}
+              </span>
 
-            <button
-              type="submit"
-              disabled={sending || messagesLoading}
-              className="ml-3 rounded bg-indigo-500 px-3 py-1.5 text-sm font-semibold hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {sending ? "Đang gửi..." : "Gửi"}
-            </button>
-          </div>
-        </form>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
+                className="ml-3 text-gray-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {attachmentPreview && (
+            <div className="relative w-fit bg-[#2b2d31] p-3">
+              <img
+                src={attachmentPreview}
+                alt="Ảnh sắp gửi"
+                className="max-h-32 rounded object-contain"
+              />
+
+              <button
+                type="button"
+                onClick={clearAttachment}
+                className="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-1 text-xs"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          <form onSubmit={sendMessage}>
+            <div className="flex items-center rounded-lg bg-[#383a40] px-3 md:px-4">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={chooseAttachment}
+                className="hidden"
+              />
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="mr-3 text-2xl text-gray-300 hover:text-white"
+                title="Gửi ảnh"
+              >
+                +
+              </button>
+
+              <input
+                value={messageInput}
+                onChange={handleMessageInput}
+                placeholder={`Nhắn tin trong #${activeChannel.label}`}
+                maxLength={2000}
+                className="min-w-0 flex-1 bg-transparent py-3 outline-none placeholder:text-gray-400"
+              />
+
+              <button
+                type="submit"
+                disabled={sending || messagesLoading}
+                className="ml-3 rounded bg-indigo-500 px-3 py-1.5 text-sm font-semibold disabled:opacity-50"
+              >
+                {sending ? "Đang gửi..." : "Gửi"}
+              </button>
+            </div>
+          </form>
+        </div>
       </section>
 
-      {/* Thành viên online thật */}
-      <aside className="hidden overflow-y-auto bg-[#2b2d31] p-4 lg:block">
-        <h2 className="mb-3 text-xs font-bold uppercase text-gray-400">
-          Đang online — {onlineUsers.length}
-        </h2>
+      {/* Thành viên */}
+      <aside
+        className={`fixed inset-y-0 right-0 z-40 w-[260px] overflow-y-auto bg-[#2b2d31] p-4 transition-transform lg:static lg:w-auto lg:translate-x-0 ${
+          showMembers ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-xs font-bold uppercase text-gray-400">
+            Đang online — {onlineUsers.length}
+          </h2>
 
-        {onlineUsers.length === 0 ? (
-          <p className="text-sm text-gray-500">
-            Đang cập nhật...
-          </p>
-        ) : (
-          onlineUsers.map((member) => (
-            <div
-              key={member.user_id}
-              className="mb-1 flex items-center gap-3 rounded p-2 text-gray-300 hover:bg-white/5"
-            >
-              <div className="relative flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold">
-                {member.username.charAt(0).toUpperCase()}
+          <button
+            type="button"
+            onClick={() => setShowMembers(false)}
+            className="text-gray-400 lg:hidden"
+          >
+            ✕
+          </button>
+        </div>
 
-                <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] bg-green-500" />
+        {onlineUsers.map((member) => (
+          <div
+            key={member.user_id}
+            className="mb-1 flex items-center gap-3 rounded p-2 text-gray-300 hover:bg-white/5"
+          >
+            <div className="relative">
+              {member.avatar_url ? (
+                <img
+                  src={member.avatar_url}
+                  alt={member.username}
+                  className="h-9 w-9 rounded-full object-cover"
+                />
+              ) : (
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold">
+                  {member.username.charAt(0).toUpperCase()}
+                </div>
+              )}
+
+              <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] bg-green-500" />
+            </div>
+
+            <span className="truncate font-medium">
+              {member.username}
+            </span>
+          </div>
+        ))}
+      </aside>
+
+      {/* Hồ sơ */}
+      {showProfile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <section className="w-full max-w-md rounded-xl bg-[#313338] p-6 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-xl font-bold">Hồ sơ của bạn</h2>
+
+              <button
+                type="button"
+                onClick={() => setShowProfile(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-5">
+              <div>
+                <label className="mb-2 block text-xs font-bold uppercase text-gray-300">
+                  Tên hiển thị
+                </label>
+
+                <input
+                  value={profileUsername}
+                  onChange={(event) =>
+                    setProfileUsername(event.target.value)
+                  }
+                  minLength={2}
+                  maxLength={30}
+                  className="w-full rounded bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
+                />
               </div>
 
-              <span className="truncate font-medium">
-                {member.username}
-              </span>
+              <div>
+                <label className="mb-2 block text-xs font-bold uppercase text-gray-300">
+                  Ảnh đại diện
+                </label>
+
+                <input
+                  ref={profileFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) =>
+                    setProfileAvatar(
+                      event.target.files?.[0] ?? null,
+                    )
+                  }
+                  className="block w-full text-sm text-gray-300"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void saveProfile()}
+                disabled={savingProfile}
+                className="w-full rounded bg-indigo-500 py-3 font-semibold disabled:opacity-50"
+              >
+                {savingProfile ? "Đang lưu..." : "Lưu hồ sơ"}
+              </button>
             </div>
-          ))
-        )}
-      </aside>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
