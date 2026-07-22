@@ -61,6 +61,14 @@ export default function Home() {
   const [sending, setSending] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
+  const [editingMessageId, setEditingMessageId] = useState<number | null>(
+    null,
+  );
+  const [editingContent, setEditingContent] = useState("");
+  const [actionMessageId, setActionMessageId] = useState<number | null>(
+    null,
+  );
+
   const activeChannel = useMemo(
     () =>
       channels.find((channel) => channel.id === selectedChannel) ??
@@ -116,7 +124,6 @@ export default function Home() {
               Boolean(onlineUser.username),
           );
 
-        // Một người mở nhiều tab vẫn chỉ được tính một lần.
         const uniqueUsers = Array.from(
           new Map(
             users.map((onlineUser) => [
@@ -176,6 +183,8 @@ export default function Home() {
       setMessages([]);
       setErrorMessage("");
       setMessageInput("");
+      setEditingMessageId(null);
+      setEditingContent("");
 
       const { data, error } = await supabase
         .from("messages")
@@ -229,6 +238,49 @@ export default function Home() {
             });
           },
         )
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "messages",
+            filter: `channel=eq.${selectedChannel}`,
+          },
+          (payload) => {
+            if (!isActive) return;
+
+            const updatedMessage = payload.new as MessageRow;
+
+            setMessages((currentMessages) =>
+              currentMessages.map((message) =>
+                message.id === updatedMessage.id
+                  ? updatedMessage
+                  : message,
+              ),
+            );
+          },
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "DELETE",
+            schema: "public",
+            table: "messages",
+          },
+          (payload) => {
+            if (!isActive) return;
+
+            const deletedMessage = payload.old as Partial<MessageRow>;
+
+            if (typeof deletedMessage.id !== "number") return;
+
+            setMessages((currentMessages) =>
+              currentMessages.filter(
+                (message) => message.id !== deletedMessage.id,
+              ),
+            );
+          },
+        )
         .subscribe();
 
       setMessagesLoading(false);
@@ -273,6 +325,89 @@ export default function Home() {
     }
 
     setSending(false);
+  }
+
+  function beginEditing(message: MessageRow) {
+    setEditingMessageId(message.id);
+    setEditingContent(message.content);
+    setErrorMessage("");
+  }
+
+  function cancelEditing() {
+    setEditingMessageId(null);
+    setEditingContent("");
+  }
+
+  async function saveEditedMessage(messageId: number) {
+    const cleanContent = editingContent.trim();
+
+    if (!cleanContent || actionMessageId !== null) {
+      return;
+    }
+
+    setActionMessageId(messageId);
+    setErrorMessage("");
+
+    const { error } = await supabase
+      .from("messages")
+      .update({
+        content: cleanContent,
+      })
+      .eq("id", messageId)
+      .eq("user_id", userId);
+
+    if (error) {
+      setErrorMessage(`Không thể sửa tin nhắn: ${error.message}`);
+    } else {
+      // Cập nhật ngay trên máy; Realtime sẽ đồng bộ cho người khác.
+      setMessages((currentMessages) =>
+        currentMessages.map((message) =>
+          message.id === messageId
+            ? { ...message, content: cleanContent }
+            : message,
+        ),
+      );
+
+      cancelEditing();
+    }
+
+    setActionMessageId(null);
+  }
+
+  async function deleteMessage(messageId: number) {
+    const shouldDelete = window.confirm(
+      "Bạn có chắc muốn xóa tin nhắn này không?",
+    );
+
+    if (!shouldDelete || actionMessageId !== null) {
+      return;
+    }
+
+    setActionMessageId(messageId);
+    setErrorMessage("");
+
+    const { error } = await supabase
+      .from("messages")
+      .delete()
+      .eq("id", messageId)
+      .eq("user_id", userId);
+
+    if (error) {
+      setErrorMessage(`Không thể xóa tin nhắn: ${error.message}`);
+    } else {
+      // Xóa ngay trên máy; Realtime sẽ đồng bộ cho người khác.
+      setMessages((currentMessages) =>
+        currentMessages.filter(
+          (message) => message.id !== messageId,
+        ),
+      );
+
+      if (editingMessageId === messageId) {
+        cancelEditing();
+      }
+    }
+
+    setActionMessageId(null);
   }
 
   async function logout() {
@@ -426,33 +561,107 @@ export default function Home() {
             </p>
           ) : (
             <div className="space-y-1">
-              {messages.map((message) => (
-                <article
-                  key={message.id}
-                  className="flex gap-4 rounded px-2 py-3 hover:bg-black/10"
-                >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-500 font-bold">
-                    {message.username
-                      .charAt(0)
-                      .toUpperCase()}
-                  </div>
+              {messages.map((message) => {
+                const isOwnMessage = message.user_id === userId;
+                const isEditing =
+                  editingMessageId === message.id;
+                const isWorking =
+                  actionMessageId === message.id;
 
-                  <div className="min-w-0">
-                    <div className="flex items-baseline gap-2">
-                      <strong>{message.username}</strong>
-
-                      <span className="text-xs text-gray-400">
-                        Hôm nay lúc{" "}
-                        {formatTime(message.created_at)}
-                      </span>
+                return (
+                  <article
+                    key={message.id}
+                    className="group relative flex gap-4 rounded px-2 py-3 hover:bg-black/10"
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-500 font-bold">
+                      {message.username
+                        .charAt(0)
+                        .toUpperCase()}
                     </div>
 
-                    <p className="mt-1 break-words text-gray-200">
-                      {message.content}
-                    </p>
-                  </div>
-                </article>
-              ))}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline gap-2">
+                        <strong>{message.username}</strong>
+
+                        <span className="text-xs text-gray-400">
+                          Hôm nay lúc{" "}
+                          {formatTime(message.created_at)}
+                        </span>
+                      </div>
+
+                      {isEditing ? (
+                        <div className="mt-2">
+                          <textarea
+                            value={editingContent}
+                            onChange={(event) =>
+                              setEditingContent(event.target.value)
+                            }
+                            maxLength={2000}
+                            rows={2}
+                            autoFocus
+                            className="w-full resize-none rounded-md bg-[#1e1f22] px-3 py-2 text-gray-100 outline-none ring-indigo-500 focus:ring-2"
+                          />
+
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void saveEditedMessage(message.id)
+                              }
+                              disabled={
+                                isWorking ||
+                                !editingContent.trim()
+                              }
+                              className="rounded bg-indigo-500 px-3 py-1.5 text-xs font-semibold hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {isWorking
+                                ? "Đang lưu..."
+                                : "Lưu"}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={cancelEditing}
+                              disabled={isWorking}
+                              className="rounded bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15 disabled:opacity-50"
+                            >
+                              Hủy
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="mt-1 break-words text-gray-200">
+                          {message.content}
+                        </p>
+                      )}
+                    </div>
+
+                    {isOwnMessage && !isEditing && (
+                      <div className="absolute right-2 top-2 hidden overflow-hidden rounded-md border border-black/20 bg-[#2b2d31] shadow-lg group-hover:flex">
+                        <button
+                          type="button"
+                          onClick={() => beginEditing(message)}
+                          disabled={isWorking}
+                          className="px-3 py-1.5 text-xs text-gray-300 hover:bg-white/10 hover:text-white disabled:opacity-50"
+                        >
+                          Sửa
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void deleteMessage(message.id)
+                          }
+                          disabled={isWorking}
+                          className="px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/15 disabled:opacity-50"
+                        >
+                          {isWorking ? "..." : "Xóa"}
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
             </div>
           )}
         </div>
