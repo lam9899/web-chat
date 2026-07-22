@@ -102,6 +102,8 @@ export default function Home() {
   const [reactions, setReactions] = useState<ReactionRow[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [privateUnreadCount, setPrivateUnreadCount] =
+    useState(0);
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(
     {},
   );
@@ -209,6 +211,13 @@ export default function Home() {
   }, [reactions, userId]);
 
   useEffect(() => {
+    document.title =
+      privateUnreadCount > 0
+        ? `(${privateUnreadCount}) Talk Cùng Lâm DZ`
+        : "Talk Cùng Lâm DZ";
+  }, [privateUnreadCount]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       setClock(Date.now());
     }, 30000);
@@ -241,9 +250,34 @@ export default function Home() {
 
       if (!isActive) return;
 
-      setUserId(user.id);
+      const authenticatedUserId = user.id;
+
+      setUserId(authenticatedUserId);
       setUsername(displayName);
       setAvatarUrl(currentAvatar);
+
+      async function refreshPrivateUnreadCount() {
+        const { count, error: countError } = await supabase
+          .from("direct_messages")
+          .select("id", {
+            count: "exact",
+            head: true,
+          })
+          .eq("receiver_id", authenticatedUserId)
+          .is("read_at", null);
+
+        if (!isActive) return;
+
+        if (countError) {
+          setErrorMessage(
+            `Không thể tải số tin riêng chưa đọc: ${countError.message}`,
+          );
+        } else {
+          setPrivateUnreadCount(count ?? 0);
+        }
+      }
+
+      await refreshPrivateUnreadCount();
 
       const { data: suspensionData, error: suspensionError } =
         await supabase
@@ -293,6 +327,18 @@ export default function Home() {
           if (payload.eventType === "DELETE") {
             setSuspension(null);
           }
+        },
+      );
+
+      onlineChannel.on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "direct_messages",
+        },
+        () => {
+          void refreshPrivateUnreadCount();
         },
       );
 
@@ -1131,7 +1177,18 @@ export default function Home() {
             }}
             className="flex w-full items-center gap-2 rounded px-2 py-2 text-gray-400 hover:bg-white/5 hover:text-gray-200"
           >
-            💬 Tin nhắn riêng
+            <span>💬</span>
+            <span className="min-w-0 flex-1 text-left">
+              Tin nhắn riêng
+            </span>
+
+            {privateUnreadCount > 0 && (
+              <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold text-white">
+                {privateUnreadCount > 99
+                  ? "99+"
+                  : privateUnreadCount}
+              </span>
+            )}
           </button>
 
           <div className="mb-2 mt-6 text-xs font-bold uppercase text-gray-400">

@@ -26,6 +26,7 @@ type DirectMessageRow = {
   content: string;
   created_at: string;
   edited_at: string | null;
+  read_at: string | null;
 };
 
 type SuspensionRow = {
@@ -82,6 +83,15 @@ export default function MessagesPage() {
     );
   }, [clock, suspension]);
 
+  const totalUnread = useMemo(
+    () =>
+      Object.values(unreadByUser).reduce(
+        (total, count) => total + count,
+        0,
+      ),
+    [unreadByUser],
+  );
+
   const filteredProfiles = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase("vi");
 
@@ -93,6 +103,13 @@ export default function MessagesPage() {
         .includes(query),
     );
   }, [profiles, searchQuery]);
+
+  useEffect(() => {
+    document.title =
+      totalUnread > 0
+        ? `(${totalUnread}) Tin nhắn riêng | Talk Cùng Lâm DZ`
+        : "Tin nhắn riêng | Talk Cùng Lâm DZ";
+  }, [totalUnread]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -127,6 +144,7 @@ export default function MessagesPage() {
       const [
         { data: profileData, error: profileError },
         { data: suspensionData, error: suspensionError },
+        { data: unreadData, error: unreadError },
       ] = await Promise.all([
         supabase
           .from("profiles")
@@ -140,6 +158,11 @@ export default function MessagesPage() {
           .select("user_id, reason, suspended_until")
           .eq("user_id", user.id)
           .maybeSingle(),
+        supabase
+          .from("direct_messages")
+          .select("sender_id")
+          .eq("receiver_id", user.id)
+          .is("read_at", null),
       ]);
 
       if (!active) return;
@@ -174,6 +197,22 @@ export default function MessagesPage() {
         );
       } else {
         setSuspension(suspensionData ?? null);
+      }
+
+      if (unreadError) {
+        setErrorMessage(
+          `Không thể tải số tin chưa đọc: ${unreadError.message}`,
+        );
+      } else {
+        const counts = (unreadData ?? []).reduce<
+          Record<string, number>
+        >((current, row) => {
+          current[row.sender_id] =
+            (current[row.sender_id] ?? 0) + 1;
+          return current;
+        }, {});
+
+        setUnreadByUser(counts);
       }
 
       realtimeChannel = supabase
@@ -214,6 +253,23 @@ export default function MessagesPage() {
 
                   return [...current, newMessage];
                 });
+
+                if (
+                  newMessage.receiver_id === user.id &&
+                  selected
+                ) {
+                  setUnreadByUser((current) => ({
+                    ...current,
+                    [selected.id]: 0,
+                  }));
+
+                  void supabase.rpc(
+                    "mark_direct_messages_read",
+                    {
+                      p_other_user_id: selected.id,
+                    },
+                  );
+                }
               } else if (
                 newMessage.receiver_id === user.id
               ) {
@@ -346,6 +402,7 @@ export default function MessagesPage() {
     }
 
     let active = true;
+    const otherUserId = selectedProfile.id;
 
     async function loadConversation() {
       setMessagesLoading(true);
@@ -354,12 +411,10 @@ export default function MessagesPage() {
       setEditingContent("");
       setErrorMessage("");
 
-      const otherUserId = selectedProfile.id;
-
       const { data, error } = await supabase
         .from("direct_messages")
         .select(
-          "id, sender_id, receiver_id, content, created_at, edited_at",
+          "id, sender_id, receiver_id, content, created_at, edited_at, read_at",
         )
         .or(
           `and(sender_id.eq.${currentUserId},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${currentUserId})`,
@@ -374,7 +429,36 @@ export default function MessagesPage() {
           `Không thể tải cuộc trò chuyện: ${error.message}`,
         );
       } else {
-        setMessages(data ?? []);
+        const loadedMessages = data ?? [];
+        setMessages(loadedMessages);
+
+        const { error: readError } = await supabase.rpc(
+          "mark_direct_messages_read",
+          {
+            p_other_user_id: otherUserId,
+          },
+        );
+
+        if (!active) return;
+
+        if (readError) {
+          setErrorMessage(
+            `Không thể đánh dấu đã đọc: ${readError.message}`,
+          );
+        } else {
+          setMessages((current) =>
+            current.map((message) =>
+              message.receiver_id === currentUserId &&
+              message.sender_id === otherUserId &&
+              message.read_at === null
+                ? {
+                    ...message,
+                    read_at: new Date().toISOString(),
+                  }
+                : message,
+            ),
+          );
+        }
       }
 
       setUnreadByUser((current) => ({
@@ -388,6 +472,67 @@ export default function MessagesPage() {
 
     return () => {
       active = false;
+    };
+  }, [currentUserId, selectedProfile]);
+
+
+  useEffect(() => {
+    if (!currentUserId || !selectedProfile) return;
+
+    async function markVisibleConversationRead() {
+      if (
+        document.visibilityState !== "visible" ||
+        !selectedProfile
+      ) {
+        return;
+      }
+
+      const { error } = await supabase.rpc(
+        "mark_direct_messages_read",
+        {
+          p_other_user_id: selectedProfile.id,
+        },
+      );
+
+      if (!error) {
+        const now = new Date().toISOString();
+
+        setMessages((current) =>
+          current.map((message) =>
+            message.receiver_id === currentUserId &&
+            message.sender_id === selectedProfile.id &&
+            message.read_at === null
+              ? {
+                  ...message,
+                  read_at: now,
+                }
+              : message,
+          ),
+        );
+
+        setUnreadByUser((current) => ({
+          ...current,
+          [selectedProfile.id]: 0,
+        }));
+      }
+    }
+
+    function handleVisibility() {
+      void markVisibleConversationRead();
+    }
+
+    window.addEventListener("focus", handleVisibility);
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibility,
+    );
+
+    return () => {
+      window.removeEventListener("focus", handleVisibility);
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibility,
+      );
     };
   }, [currentUserId, selectedProfile]);
 
@@ -589,8 +734,14 @@ export default function MessagesPage() {
         <header className="border-b border-black/20 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-bold">
-                Tin nhắn riêng
+              <h1 className="flex items-center gap-2 text-xl font-bold">
+                <span>Tin nhắn riêng</span>
+
+                {totalUnread > 0 && (
+                  <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs">
+                    {totalUnread > 99 ? "99+" : totalUnread}
+                  </span>
+                )}
               </h1>
               <p className="text-xs text-gray-400">
                 Trò chuyện riêng tư với thành viên
@@ -842,6 +993,11 @@ export default function MessagesPage() {
                                 )}
                                 {message.edited_at
                                   ? " · đã sửa"
+                                  : ""}
+                                {isMine
+                                  ? message.read_at
+                                    ? " · Đã xem"
+                                    : " · Đã gửi"
                                   : ""}
                               </div>
                             </>
