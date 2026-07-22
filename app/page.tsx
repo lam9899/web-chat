@@ -52,6 +52,15 @@ type TypingPayload = {
   typing: boolean;
 };
 
+type SuspensionRow = {
+  user_id: string;
+  reason: string;
+  suspended_until: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
 const channels: ChannelItem[] = [
   {
     id: "chung",
@@ -119,6 +128,9 @@ export default function Home() {
     null,
   );
   const [errorMessage, setErrorMessage] = useState("");
+  const [suspension, setSuspension] =
+    useState<SuspensionRow | null>(null);
+  const [clock, setClock] = useState(Date.now());
 
   const [showChannels, setShowChannels] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
@@ -140,6 +152,15 @@ export default function Home() {
       channels[0],
     [selectedChannel],
   );
+
+  const isChatSuspended = useMemo(() => {
+    if (!suspension) return false;
+
+    return (
+      suspension.suspended_until === null ||
+      new Date(suspension.suspended_until).getTime() > clock
+    );
+  }, [clock, suspension]);
 
   const messageById = useMemo(
     () => new Map(messages.map((message) => [message.id, message])),
@@ -185,6 +206,16 @@ export default function Home() {
     return grouped;
   }, [reactions, userId]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setClock(Date.now());
+    }, 30000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
   // Xác thực và Presence online toàn website.
   useEffect(() => {
     let isActive = true;
@@ -212,6 +243,25 @@ export default function Home() {
       setUsername(displayName);
       setAvatarUrl(currentAvatar);
 
+      const { data: suspensionData, error: suspensionError } =
+        await supabase
+          .from("user_suspensions")
+          .select(
+            "user_id, reason, suspended_until, created_by, created_at, updated_at",
+          )
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+      if (!isActive) return;
+
+      if (suspensionError) {
+        setErrorMessage(
+          `Không thể kiểm tra trạng thái tài khoản: ${suspensionError.message}`,
+        );
+      } else {
+        setSuspension(suspensionData ?? null);
+      }
+
       const onlineChannel = supabase.channel("online-users-global", {
         config: {
           presence: {
@@ -219,6 +269,30 @@ export default function Home() {
           },
         },
       });
+
+      onlineChannel.on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "user_suspensions",
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          if (!isActive) return;
+
+          if (
+            payload.eventType === "INSERT" ||
+            payload.eventType === "UPDATE"
+          ) {
+            setSuspension(payload.new as SuspensionRow);
+          }
+
+          if (payload.eventType === "DELETE") {
+            setSuspension(null);
+          }
+        },
+      );
 
       onlineChannel.on("presence", { event: "sync" }, () => {
         const presenceState = onlineChannel.presenceState();
@@ -513,7 +587,7 @@ export default function Home() {
   function announceTyping(value: string) {
     const roomChannel = roomChannelRef.current;
 
-    if (!roomChannel || !userId) return;
+    if (!roomChannel || !userId || isChatSuspended) return;
 
     const now = Date.now();
 
@@ -559,6 +633,14 @@ export default function Home() {
   }
 
   function chooseAttachment(event: ChangeEvent<HTMLInputElement>) {
+    if (isChatSuspended) {
+      setErrorMessage(
+        "Tài khoản của bạn đang bị khóa quyền chat.",
+      );
+      event.target.value = "";
+      return;
+    }
+
     const file = event.target.files?.[0] ?? null;
 
     if (!file) return;
@@ -624,6 +706,13 @@ export default function Home() {
   ) {
     event.preventDefault();
 
+    if (isChatSuspended) {
+      setErrorMessage(
+        "Tài khoản của bạn đang bị khóa quyền chat.",
+      );
+      return;
+    }
+
     const content = messageInput.trim();
 
     if (
@@ -674,6 +763,13 @@ export default function Home() {
   }
 
   function beginEditing(message: MessageRow) {
+    if (isChatSuspended) {
+      setErrorMessage(
+        "Tài khoản của bạn đang bị khóa quyền chat.",
+      );
+      return;
+    }
+
     setEditingMessageId(message.id);
     setEditingContent(message.content);
     setErrorMessage("");
@@ -685,6 +781,13 @@ export default function Home() {
   }
 
   async function saveEditedMessage(messageId: number) {
+    if (isChatSuspended) {
+      setErrorMessage(
+        "Tài khoản của bạn đang bị khóa quyền chat.",
+      );
+      return;
+    }
+
     const cleanContent = editingContent.trim();
 
     if (!cleanContent || actionMessageId !== null) {
@@ -754,6 +857,13 @@ export default function Home() {
   }
 
   async function toggleReaction(messageId: number, emoji: string) {
+    if (isChatSuspended) {
+      setErrorMessage(
+        "Tài khoản của bạn đang bị khóa quyền chat.",
+      );
+      return;
+    }
+
     const existing = reactions.some(
       (reaction) =>
         reaction.message_id === messageId &&
@@ -815,6 +925,19 @@ export default function Home() {
   async function logout() {
     await supabase.auth.signOut();
     window.location.href = "/login";
+  }
+
+  function suspensionEndText() {
+    if (!suspension?.suspended_until) {
+      return "vĩnh viễn";
+    }
+
+    return new Date(
+      suspension.suspended_until,
+    ).toLocaleString("vi-VN", {
+      dateStyle: "short",
+      timeStyle: "short",
+    });
   }
 
   function formatTime(dateString: string) {
@@ -1024,6 +1147,22 @@ export default function Home() {
           {errorMessage && (
             <div className="mb-4 rounded-md bg-red-500/15 px-4 py-3 text-sm text-red-300">
               {errorMessage}
+            </div>
+          )}
+
+          {isChatSuspended && suspension && (
+            <div className="mb-4 rounded-md border border-orange-500/30 bg-orange-500/15 px-4 py-3 text-sm text-orange-200">
+              <strong>Bạn đang bị khóa quyền chat.</strong>
+              <div className="mt-1">
+                Lý do: {suspension.reason}
+              </div>
+              <div>
+                Thời hạn: {suspensionEndText()}
+              </div>
+              <div className="mt-1 text-orange-300">
+                Bạn vẫn có thể đọc tin nhắn nhưng không thể gửi,
+                sửa tin, reaction hoặc tải ảnh.
+              </div>
             </div>
           )}
 
@@ -1300,8 +1439,13 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="mr-3 text-2xl text-gray-300 hover:text-white"
-                title="Gửi ảnh"
+                disabled={isChatSuspended}
+                className="mr-3 text-2xl text-gray-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                title={
+                  isChatSuspended
+                    ? "Tài khoản đang bị khóa chat"
+                    : "Gửi ảnh"
+                }
               >
                 +
               </button>
@@ -1309,14 +1453,23 @@ export default function Home() {
               <input
                 value={messageInput}
                 onChange={handleMessageInput}
-                placeholder={`Nhắn tin trong #${activeChannel.label}`}
+                disabled={isChatSuspended}
+                placeholder={
+                  isChatSuspended
+                    ? "Tài khoản đang bị khóa quyền chat"
+                    : `Nhắn tin trong #${activeChannel.label}`
+                }
                 maxLength={2000}
-                className="min-w-0 flex-1 bg-transparent py-3 outline-none placeholder:text-gray-400"
+                className="min-w-0 flex-1 bg-transparent py-3 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
               />
 
               <button
                 type="submit"
-                disabled={sending || messagesLoading}
+                disabled={
+                  sending ||
+                  messagesLoading ||
+                  isChatSuspended
+                }
                 className="ml-3 rounded bg-indigo-500 px-3 py-1.5 text-sm font-semibold disabled:opacity-50"
               >
                 {sending ? "Đang gửi..." : "Gửi"}
