@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 
 const supabase = createClient();
@@ -20,30 +20,62 @@ type OnlineUser = {
   online_at: string;
 };
 
-const channels = ["chung", "giới-thiệu", "góp-ý", "trò-chuyện"];
+type ChannelItem = {
+  id: string;
+  label: string;
+  description: string;
+};
+
+const channels: ChannelItem[] = [
+  {
+    id: "chung",
+    label: "chung",
+    description: "Kênh trò chuyện chung của cộng đồng",
+  },
+  {
+    id: "gioi-thieu",
+    label: "giới-thiệu",
+    description: "Giới thiệu bản thân và làm quen với mọi người",
+  },
+  {
+    id: "gop-y",
+    label: "góp-ý",
+    description: "Đóng góp ý kiến để cộng đồng tốt hơn",
+  },
+  {
+    id: "tro-chuyen",
+    label: "trò-chuyện",
+    description: "Trò chuyện tự do cùng các thành viên",
+  },
+];
 
 export default function Home() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
+  const [selectedChannel, setSelectedChannel] = useState("chung");
   const [messageInput, setMessageInput] = useState("");
   const [username, setUsername] = useState("Bạn");
   const [userId, setUserId] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [messagesLoading, setMessagesLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
+  const activeChannel = useMemo(
+    () =>
+      channels.find((channel) => channel.id === selectedChannel) ??
+      channels[0],
+    [selectedChannel],
+  );
+
+  // Kiểm tra đăng nhập và theo dõi danh sách online.
   useEffect(() => {
     let isActive = true;
-
-    let messageChannel:
-      | ReturnType<typeof supabase.channel>
-      | null = null;
-
     let presenceChannel:
       | ReturnType<typeof supabase.channel>
       | null = null;
 
-    async function initializeChat() {
+    async function initializeUser() {
       const {
         data: { user },
         error: userError,
@@ -64,55 +96,7 @@ export default function Home() {
       setUsername(displayName);
       setUserId(user.id);
 
-      // Tải tin nhắn cũ
-      const { data, error } = await supabase
-        .from("messages")
-        .select(
-          "id, user_id, username, content, channel, created_at",
-        )
-        .eq("channel", "chung")
-        .order("created_at", { ascending: true })
-        .limit(100);
-
-      if (!isActive) return;
-
-      if (error) {
-        setErrorMessage(`Không thể tải tin nhắn: ${error.message}`);
-      } else {
-        setMessages(data ?? []);
-      }
-
-      // Nhận tin nhắn mới theo thời gian thực
-      messageChannel = supabase
-        .channel("messages-chung")
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "messages",
-            filter: "channel=eq.chung",
-          },
-          (payload) => {
-            const newMessage = payload.new as MessageRow;
-
-            setMessages((currentMessages) => {
-              const alreadyExists = currentMessages.some(
-                (message) => message.id === newMessage.id,
-              );
-
-              if (alreadyExists) {
-                return currentMessages;
-              }
-
-              return [...currentMessages, newMessage];
-            });
-          },
-        )
-        .subscribe();
-
-      // Theo dõi người đang online
-      const onlineChannel = supabase.channel("online-users-chung", {
+      const onlineChannel = supabase.channel("online-users-global", {
         config: {
           presence: {
             key: user.id,
@@ -128,10 +112,11 @@ export default function Home() {
           .map((presence) => presence as unknown as OnlineUser)
           .filter(
             (onlineUser) =>
-              onlineUser.user_id && onlineUser.username,
+              Boolean(onlineUser.user_id) &&
+              Boolean(onlineUser.username),
           );
 
-        // Một người mở nhiều tab vẫn chỉ tính là một người
+        // Một người mở nhiều tab vẫn chỉ được tính một lần.
         const uniqueUsers = Array.from(
           new Map(
             users.map((onlineUser) => [
@@ -163,10 +148,93 @@ export default function Home() {
         }
       });
 
-      setLoading(false);
+      setAuthLoading(false);
     }
 
-    void initializeChat();
+    void initializeUser();
+
+    return () => {
+      isActive = false;
+
+      if (presenceChannel) {
+        void supabase.removeChannel(presenceChannel);
+      }
+    };
+  }, []);
+
+  // Tải và theo dõi tin nhắn riêng của kênh đang chọn.
+  useEffect(() => {
+    if (!userId) return;
+
+    let isActive = true;
+    let messageChannel:
+      | ReturnType<typeof supabase.channel>
+      | null = null;
+
+    async function initializeChannelMessages() {
+      setMessagesLoading(true);
+      setMessages([]);
+      setErrorMessage("");
+      setMessageInput("");
+
+      const { data, error } = await supabase
+        .from("messages")
+        .select(
+          "id, user_id, username, content, channel, created_at",
+        )
+        .eq("channel", selectedChannel)
+        .order("created_at", { ascending: true })
+        .limit(100);
+
+      if (!isActive) return;
+
+      if (error) {
+        setErrorMessage(`Không thể tải tin nhắn: ${error.message}`);
+      } else {
+        setMessages(data ?? []);
+      }
+
+      const subscriptionName = [
+        "messages",
+        selectedChannel,
+        userId,
+        Date.now().toString(),
+      ].join("-");
+
+      messageChannel = supabase
+        .channel(subscriptionName)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "messages",
+            filter: `channel=eq.${selectedChannel}`,
+          },
+          (payload) => {
+            if (!isActive) return;
+
+            const newMessage = payload.new as MessageRow;
+
+            setMessages((currentMessages) => {
+              const alreadyExists = currentMessages.some(
+                (message) => message.id === newMessage.id,
+              );
+
+              if (alreadyExists) {
+                return currentMessages;
+              }
+
+              return [...currentMessages, newMessage];
+            });
+          },
+        )
+        .subscribe();
+
+      setMessagesLoading(false);
+    }
+
+    void initializeChannelMessages();
 
     return () => {
       isActive = false;
@@ -174,12 +242,8 @@ export default function Home() {
       if (messageChannel) {
         void supabase.removeChannel(messageChannel);
       }
-
-      if (presenceChannel) {
-        void supabase.removeChannel(presenceChannel);
-      }
     };
-  }, []);
+  }, [selectedChannel, userId]);
 
   async function sendMessage(
     event: FormEvent<HTMLFormElement>,
@@ -199,7 +263,7 @@ export default function Home() {
       user_id: userId,
       username,
       content,
-      channel: "chung",
+      channel: selectedChannel,
     });
 
     if (error) {
@@ -223,7 +287,7 @@ export default function Home() {
     });
   }
 
-  if (loading) {
+  if (authLoading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#1e1f22] text-white">
         <p>Đang tải phòng chat...</p>
@@ -264,19 +328,25 @@ export default function Home() {
           </div>
 
           <nav className="space-y-1">
-            {channels.map((channel, index) => (
-              <button
-                key={channel}
-                className={`flex w-full items-center gap-2 rounded px-2 py-2 text-left ${
-                  index === 0
-                    ? "bg-white/10 text-white"
-                    : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
-                }`}
-              >
-                <span className="text-xl text-gray-400">#</span>
-                {channel}
-              </button>
-            ))}
+            {channels.map((channel) => {
+              const isSelected = channel.id === selectedChannel;
+
+              return (
+                <button
+                  key={channel.id}
+                  type="button"
+                  onClick={() => setSelectedChannel(channel.id)}
+                  className={`flex w-full items-center gap-2 rounded px-2 py-2 text-left ${
+                    isSelected
+                      ? "bg-white/10 text-white"
+                      : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
+                  }`}
+                >
+                  <span className="text-xl text-gray-400">#</span>
+                  {channel.label}
+                </button>
+              );
+            })}
           </nav>
 
           <div className="mb-2 mt-6 flex items-center justify-between text-xs font-bold uppercase text-gray-400">
@@ -318,10 +388,10 @@ export default function Home() {
       <section className="flex min-w-0 flex-col">
         <header className="flex h-[57px] items-center border-b border-black/20 px-4 shadow">
           <span className="mr-2 text-2xl text-gray-400">#</span>
-          <strong>chung</strong>
+          <strong>{activeChannel.label}</strong>
 
           <span className="ml-4 hidden text-sm text-gray-400 md:block">
-            Kênh trò chuyện chung của cộng đồng
+            {activeChannel.description}
           </span>
         </header>
 
@@ -332,11 +402,11 @@ export default function Home() {
             </div>
 
             <h1 className="text-3xl font-bold">
-              Chào mừng đến với #chung!
+              Chào mừng đến với #{activeChannel.label}!
             </h1>
 
             <p className="mt-2 text-gray-400">
-              Tin nhắn trong kênh này được lưu trên Supabase.
+              {activeChannel.description}
             </p>
           </div>
 
@@ -346,7 +416,11 @@ export default function Home() {
             </div>
           )}
 
-          {messages.length === 0 ? (
+          {messagesLoading ? (
+            <p className="text-sm text-gray-400">
+              Đang tải tin nhắn...
+            </p>
+          ) : messages.length === 0 ? (
             <p className="text-sm text-gray-400">
               Chưa có tin nhắn. Hãy gửi tin nhắn đầu tiên.
             </p>
@@ -398,14 +472,14 @@ export default function Home() {
               onChange={(event) =>
                 setMessageInput(event.target.value)
               }
-              placeholder="Nhắn tin trong #chung"
+              placeholder={`Nhắn tin trong #${activeChannel.label}`}
               maxLength={2000}
               className="min-w-0 flex-1 bg-transparent py-3 text-gray-100 outline-none placeholder:text-gray-400"
             />
 
             <button
               type="submit"
-              disabled={sending}
+              disabled={sending || messagesLoading}
               className="ml-3 rounded bg-indigo-500 px-3 py-1.5 text-sm font-semibold hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {sending ? "Đang gửi..." : "Gửi"}
