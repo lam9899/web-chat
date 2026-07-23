@@ -42,6 +42,13 @@ type BlockRow = {
   created_at: string;
 };
 
+type CallType = "audio" | "video";
+
+type CreatedCallRow = {
+  id: string;
+  status: string;
+};
+
 export default function MessagesPage() {
   const [currentUserId, setCurrentUserId] = useState("");
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -77,6 +84,8 @@ export default function MessagesPage() {
   const [blockingUserId, setBlockingUserId] = useState<
     string | null
   >(null);
+  const [startingCallType, setStartingCallType] =
+    useState<CallType | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [showContacts, setShowContacts] = useState(true);
 
@@ -709,6 +718,57 @@ export default function MessagesPage() {
     setSending(false);
   }
 
+  async function startCall(callType: CallType) {
+    if (
+      !selectedProfile ||
+      !currentUserId ||
+      startingCallType !== null
+    ) {
+      return;
+    }
+
+    if (isSuspended) {
+      setErrorMessage(
+        "Tài khoản của bạn đang bị khóa quyền chat.",
+      );
+      return;
+    }
+
+    if (isSelectedBlocked) {
+      setErrorMessage(
+        "Hãy bỏ chặn thành viên trước khi gọi.",
+      );
+      return;
+    }
+
+    setStartingCallType(callType);
+    setErrorMessage("");
+
+    const { data, error } = await supabase.rpc(
+      "create_private_call",
+      {
+        p_receiver_id: selectedProfile.id,
+        p_call_type: callType,
+      },
+    );
+
+    const createdCall = (
+      Array.isArray(data) ? data[0] : data
+    ) as CreatedCallRow | null;
+
+    if (error || !createdCall?.id) {
+      setErrorMessage(
+        error
+          ? `Không thể bắt đầu cuộc gọi: ${error.message}`
+          : "Không thể tạo cuộc gọi.",
+      );
+      setStartingCallType(null);
+      return;
+    }
+
+    window.location.href = `/call/${createdCall.id}`;
+  }
+
   async function toggleBlockSelected() {
     if (
       !selectedProfile ||
@@ -1038,6 +1098,38 @@ export default function MessagesPage() {
               </div>
 
               <div className="ml-auto flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void startCall("audio")}
+                  disabled={
+                    startingCallType !== null ||
+                    isSelectedBlocked ||
+                    isSuspended
+                  }
+                  title="Gọi thoại"
+                  className="rounded bg-green-600 px-3 py-2 text-sm font-semibold hover:bg-green-500 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {startingCallType === "audio"
+                    ? "..."
+                    : "📞"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void startCall("video")}
+                  disabled={
+                    startingCallType !== null ||
+                    isSelectedBlocked ||
+                    isSuspended
+                  }
+                  title="Gọi video"
+                  className="rounded bg-indigo-500 px-3 py-2 text-sm font-semibold hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {startingCallType === "video"
+                    ? "..."
+                    : "🎥"}
+                </button>
+
                 <button
                   type="button"
                   onClick={() =>

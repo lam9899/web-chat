@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import PwaRegister from "./pwa-register";
+import CallProvider from "./call-provider";
+import "@livekit/components-styles";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -46,7 +48,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
-        {children}
+        <CallProvider>{children}</CallProvider>
         <PwaRegister />
       </body>
     </html>
