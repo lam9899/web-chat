@@ -57,6 +57,7 @@ export default function CallPage() {
     useState<ConnectionDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const [ending, setEnding] = useState(false);
   const [errorMessage, setErrorMessage] =
     useState("");
 
@@ -294,10 +295,24 @@ export default function CallPage() {
     if (!call || endingRef.current) return;
 
     endingRef.current = true;
+    setEnding(true);
+    setErrorMessage("");
 
-    await supabase.rpc("end_private_call", {
-      p_call_id: call.id,
-    });
+    const { error } = await supabase.rpc(
+      "end_private_call",
+      {
+        p_call_id: call.id,
+      },
+    );
+
+    if (error) {
+      endingRef.current = false;
+      setEnding(false);
+      setErrorMessage(
+        `Không thể kết thúc cuộc gọi: ${error.message}`,
+      );
+      return;
+    }
 
     window.location.href = otherUserId
       ? `/messages?user=${encodeURIComponent(
@@ -384,9 +399,12 @@ export default function CallPage() {
             <button
               type="button"
               onClick={() => void finishCall()}
-              className="mt-7 rounded-xl bg-red-500 px-8 py-3 font-bold hover:bg-red-400"
+              disabled={ending}
+              className="mt-7 rounded-xl bg-red-500 px-8 py-3 font-bold hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Hủy cuộc gọi
+              {ending
+                ? "Đang kết thúc..."
+                : "Hủy cuộc gọi"}
             </button>
           ) : (
             <div className="mt-7 grid grid-cols-2 gap-3">
@@ -481,6 +499,23 @@ export default function CallPage() {
               : "Gọi thoại"}
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={() => void finishCall()}
+          disabled={ending}
+          className="fixed bottom-6 left-1/2 z-[100] -translate-x-1/2 rounded-full bg-red-600 px-7 py-3 font-bold text-white shadow-2xl hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {ending
+            ? "Đang kết thúc..."
+            : "📵 Kết thúc cuộc gọi"}
+        </button>
+
+        {errorMessage && (
+          <div className="fixed bottom-24 left-1/2 z-[100] w-[min(90vw,520px)] -translate-x-1/2 rounded-lg bg-red-500/90 px-4 py-3 text-center text-sm text-white shadow-xl">
+            {errorMessage}
+          </div>
+        )}
 
         {call.call_type === "video" ? (
           <VideoConference />
