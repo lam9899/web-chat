@@ -134,6 +134,26 @@ export default function FriendManager({
   }
 
   useEffect(() => {
+    if (!open) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    function closeWithEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", closeWithEscape);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeWithEscape);
+    };
+  }, [open]);
+
+  useEffect(() => {
     void loadData();
 
     const channel = supabase
@@ -358,10 +378,10 @@ export default function FriendManager({
             if (event.target === event.currentTarget) setOpen(false);
           }}
         >
-          <section className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#24262b] text-white shadow-2xl">
-            <header className="flex items-center justify-between border-b border-white/10 p-5">
+          <section className="flex h-[min(760px,90vh)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#24262b] text-white shadow-2xl">
+            <header className="flex shrink-0 items-center justify-between border-b border-white/10 px-6 py-5">
               <div>
-                <h2 className="text-xl font-bold">Bạn bè</h2>
+                <h2 className="text-2xl font-bold">Bạn bè</h2>
                 <p className="text-sm text-gray-400">
                   Chỉ bạn bè mới thấy nhau online, nhắn tin và gọi điện.
                 </p>
@@ -375,7 +395,7 @@ export default function FriendManager({
               </button>
             </header>
 
-            <nav className="grid grid-cols-3 border-b border-white/10 p-2">
+            <nav className="grid shrink-0 grid-cols-3 gap-2 border-b border-white/10 px-6 py-4">
               {([
                 ["friends", `Bạn bè (${friends.length})`],
                 ["requests", `Lời mời (${incomingCount})`],
@@ -385,7 +405,7 @@ export default function FriendManager({
                   key={id}
                   type="button"
                   onClick={() => setTab(id)}
-                  className={`rounded-xl px-3 py-2 text-sm font-bold ${
+                  className={`rounded-xl px-4 py-3 text-sm font-bold transition ${
                     tab === id
                       ? "bg-indigo-500 text-white"
                       : "text-gray-400 hover:bg-white/5 hover:text-white"
@@ -396,7 +416,7 @@ export default function FriendManager({
               ))}
             </nav>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 [scrollbar-gutter:stable]">
               {errorMessage && (
                 <div className="mb-4 rounded-xl bg-red-500/15 px-4 py-3 text-sm text-red-300">
                   {errorMessage}
@@ -423,7 +443,7 @@ export default function FriendManager({
                     {friends.map((friend) => (
                       <article
                         key={friend.id}
-                        className="flex items-center gap-3 rounded-2xl bg-black/15 p-3"
+                        className="flex items-center gap-4 rounded-2xl border border-white/5 bg-black/15 p-4"
                       >
                         <Avatar profile={friend} />
                         <ProfileIdentity profile={friend} />
@@ -473,7 +493,7 @@ export default function FriendManager({
                     {requests.map((request) => (
                       <article
                         key={request.request_id}
-                        className="flex items-center gap-3 rounded-2xl bg-black/15 p-3"
+                        className="flex items-center gap-4 rounded-2xl border border-white/5 bg-black/15 p-4"
                       >
                         <Avatar profile={request} />
                         <ProfileIdentity profile={request} />
@@ -549,22 +569,22 @@ export default function FriendManager({
                 )
               ) : (
                 <div>
-                  <form onSubmit={searchPeople} className="flex gap-2">
+                  <form onSubmit={searchPeople} className="mx-auto flex max-w-2xl gap-3">
                     <input
                       value={searchQuery}
                       onChange={(event) => setSearchQuery(event.target.value)}
                       placeholder="Nhập Gmail, #000000 hoặc tên..."
-                      className="min-w-0 flex-1 rounded-xl bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
+                      className="min-w-0 flex-1 rounded-xl border border-white/10 bg-[#1e1f22] px-4 py-3.5 outline-none ring-indigo-500 focus:ring-2"
                     />
                     <button
                       type="submit"
                       disabled={searching || !searchQuery.trim()}
-                      className="rounded-xl bg-indigo-500 px-5 py-3 font-bold disabled:opacity-50"
+                      className="rounded-xl bg-indigo-500 px-6 py-3.5 font-bold transition hover:bg-indigo-400 disabled:opacity-50"
                     >
                       {searching ? "Đang tìm..." : "Tìm"}
                     </button>
                   </form>
-                  <p className="mt-2 text-xs text-gray-500">
+                  <p className="mx-auto mt-2 max-w-2xl text-xs text-gray-500">
                     Gmail phải nhập đầy đủ. ID có dạng #000000.
                   </p>
 
@@ -572,7 +592,7 @@ export default function FriendManager({
                     {results.map((result) => (
                       <article
                         key={result.id}
-                        className="flex items-center gap-3 rounded-2xl bg-black/15 p-3"
+                        className="flex items-center gap-4 rounded-2xl border border-white/5 bg-black/15 p-4"
                       >
                         <Avatar profile={result} />
                         <ProfileIdentity profile={result} />
