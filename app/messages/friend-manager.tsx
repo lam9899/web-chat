@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { createClient } from "@/utils/supabase/client";
 import MemberBadge, {
   formatPublicId,
@@ -371,14 +372,16 @@ export default function FriendManager({
         )}
       </button>
 
-      {open && (
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
         <div
-          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setOpen(false);
           }}
         >
-          <section className="flex h-[min(760px,90vh)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#24262b] text-white shadow-2xl">
+          <section className="flex h-[min(760px,90vh)] w-[min(900px,calc(100vw-32px))] flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#24262b] text-white shadow-2xl">
             <header className="flex shrink-0 items-center justify-between border-b border-white/10 px-6 py-5">
               <div>
                 <h2 className="text-2xl font-bold">Bạn bè</h2>
@@ -609,7 +612,8 @@ export default function FriendManager({
               )}
             </div>
           </section>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
