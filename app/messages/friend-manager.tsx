@@ -78,11 +78,15 @@ function ProfileIdentity({ profile }: { profile: FriendProfile }) {
 
 export default function FriendManager({
   onFriendsChanged,
+  triggerVariant = "icon",
+  initialTab = "friends",
 }: {
   onFriendsChanged?: () => void;
+  triggerVariant?: "icon" | "sidebar";
+  initialTab?: TabId;
 }) {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<TabId>("friends");
+  const [tab, setTab] = useState<TabId>(initialTab);
   const [friends, setFriends] = useState<FriendRow[]>([]);
   const [requests, setRequests] = useState<FriendRequestRow[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -310,16 +314,38 @@ export default function FriendManager({
       <button
         type="button"
         onClick={() => {
+          setTab(initialTab);
           setOpen(true);
           void loadData();
         }}
-        className="relative flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 text-lg hover:bg-white/15"
-        title="Bạn bè"
+        className={
+          triggerVariant === "sidebar"
+            ? "relative flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-400"
+            : "relative flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 text-lg hover:bg-white/15"
+        }
+        title={
+          triggerVariant === "sidebar"
+            ? "Tìm và thêm bạn bè"
+            : "Bạn bè"
+        }
         aria-label="Quản lý bạn bè"
       >
-        👥
+        <span aria-hidden="true">
+          {triggerVariant === "sidebar" ? "➕" : "👥"}
+        </span>
+
+        {triggerVariant === "sidebar" && (
+          <span>Thêm bạn bè</span>
+        )}
+
         {incomingCount > 0 && (
-          <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red-500 px-1 text-center text-[10px] font-black leading-5 text-white">
+          <span
+            className={
+              triggerVariant === "sidebar"
+                ? "ml-1 min-w-5 rounded-full bg-red-500 px-1 text-center text-[10px] font-black leading-5 text-white"
+                : "absolute -right-1 -top-1 min-w-5 rounded-full bg-red-500 px-1 text-center text-[10px] font-black leading-5 text-white"
+            }
+          >
             {incomingCount > 9 ? "9+" : incomingCount}
           </span>
         )}

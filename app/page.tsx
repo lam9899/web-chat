@@ -14,6 +14,7 @@ import MemberBadge, {
   formatPublicId,
   type MemberRole,
 } from "@/components/member-badge";
+import FriendManager from "./messages/friend-manager";
 
 const supabase = createClient();
 
@@ -83,6 +84,51 @@ type PrivateMessageNotificationRow = {
   content: string;
 };
 
+type ReportCategory =
+  | "profanity"
+  | "sexual_content"
+  | "illegal_content"
+  | "spam_scam"
+  | "other";
+
+const reportCategoryOptions: Array<{
+  id: ReportCategory;
+  label: string;
+  description: string;
+  icon: string;
+}> = [
+  {
+    id: "profanity",
+    label: "Chửi bậy hoặc xúc phạm",
+    description: "Lăng mạ, quấy rối hoặc công kích thành viên.",
+    icon: "🤬",
+  },
+  {
+    id: "sexual_content",
+    label: "Link hoặc nội dung đồi trụy",
+    description: "Hình ảnh, nội dung hoặc liên kết khiêu dâm.",
+    icon: "🔞",
+  },
+  {
+    id: "illegal_content",
+    label: "Nội dung phạm pháp",
+    description: "Hướng dẫn, mua bán hoặc chia sẻ nội dung trái pháp luật.",
+    icon: "⚠️",
+  },
+  {
+    id: "spam_scam",
+    label: "Spam hoặc lừa đảo",
+    description: "Quảng cáo rác, giả mạo hoặc dụ dỗ chuyển tiền.",
+    icon: "🚫",
+  },
+  {
+    id: "other",
+    label: "Lý do khác",
+    description: "Nội dung không phù hợp khác cần quản trị kiểm tra.",
+    icon: "📝",
+  },
+];
+
 const initialChannels: ChannelItem[] = [
   {
     id: "chung",
@@ -146,6 +192,11 @@ export default function Home() {
   const [friendIds, setFriendIds] = useState<Set<string>>(
     new Set(),
   );
+  const [blockedUserIds, setBlockedUserIds] = useState<
+    Set<string>
+  >(new Set());
+  const [friendRequestSentIds, setFriendRequestSentIds] =
+    useState<Set<string>>(new Set());
 
   const [replyingTo, setReplyingTo] = useState<MessageRow | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<number | null>(
@@ -169,6 +220,19 @@ export default function Home() {
 
   const [showChannels, setShowChannels] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
+  const [
+    openMessageMenuId,
+    setOpenMessageMenuId,
+  ] = useState<number | null>(null);
+  const [workingMemberId, setWorkingMemberId] =
+    useState<string | null>(null);
+  const [reportingMessage, setReportingMessage] =
+    useState<MessageRow | null>(null);
+  const [reportCategory, setReportCategory] =
+    useState<ReportCategory>("profanity");
+  const [reportDetails, setReportDetails] = useState("");
+  const [submittingReport, setSubmittingReport] =
+    useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -248,6 +312,27 @@ export default function Home() {
   }, [memberCards]);
 
   useEffect(() => {
+    function closeMessageMenu(event: MouseEvent) {
+      const target = event.target as HTMLElement | null;
+
+      if (target?.closest("[data-public-message-menu]")) {
+        return;
+      }
+
+      setOpenMessageMenuId(null);
+    }
+
+    document.addEventListener("mousedown", closeMessageMenu);
+
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        closeMessageMenu,
+      );
+    };
+  }, []);
+
+  useEffect(() => {
     friendIdsRef.current = friendIds;
   }, [friendIds]);
 
@@ -266,25 +351,36 @@ export default function Home() {
         .in("user_id", uniqueIds),
     ]);
 
-    const roleMap = new Map(
-      (roles ?? []).map((row) => [
-        row.user_id,
-        row.role as MemberRole,
-      ]),
+    const roleMap = new Map<string, MemberRole>(
+      (roles ?? []).map(
+        (row: {
+          user_id: string;
+          role: MemberRole;
+        }) => [row.user_id, row.role],
+      ),
     );
 
-    const cards = (profiles ?? []).reduce<
-      Record<string, MemberCard>
-    >((current, profile) => {
-      current[profile.id] = {
-        id: profile.id,
-        username: profile.username,
-        avatar_url: profile.avatar_url,
-        public_id: profile.public_id,
-        role: roleMap.get(profile.id) ?? "member",
-      };
-      return current;
-    }, {});
+    const cards = (profiles ?? []).reduce(
+      (
+        current: Record<string, MemberCard>,
+        profile: {
+          id: string;
+          username: string;
+          avatar_url: string | null;
+          public_id: number;
+        },
+      ) => {
+        current[profile.id] = {
+          id: profile.id,
+          username: profile.username,
+          avatar_url: profile.avatar_url,
+          public_id: profile.public_id,
+          role: roleMap.get(profile.id) ?? "member",
+        };
+        return current;
+      },
+      {} as Record<string, MemberCard>,
+    );
 
     setMemberCards((current) => {
       const next = { ...current, ...cards };
@@ -327,8 +423,12 @@ export default function Home() {
 
       const authenticatedUserId = user.id;
 
-      const [profileResponse, roleResponse, friendsResponse] =
-        await Promise.all([
+      const [
+        profileResponse,
+        roleResponse,
+        friendsResponse,
+        blocksResponse,
+      ] = await Promise.all([
           supabase
             .from("profiles")
             .select("id, username, avatar_url, public_id")
@@ -340,6 +440,10 @@ export default function Home() {
             .eq("user_id", authenticatedUserId)
             .maybeSingle(),
           supabase.rpc("get_my_friends"),
+          supabase
+            .from("user_blocks")
+            .select("blocked_id")
+            .eq("blocker_id", authenticatedUserId),
         ]);
 
       if (!isActive) return;
@@ -368,6 +472,12 @@ export default function Home() {
       const friendIdSet = new Set(
         friends.map((friend) => friend.id),
       );
+      const blockedIdSet = new Set<string>(
+        (blocksResponse.data ?? []).map(
+          (row: { blocked_id: string }) =>
+            row.blocked_id,
+        ),
+      );
       const initialCards: Record<string, MemberCard> = {
         [authenticatedUserId]: {
           id: authenticatedUserId,
@@ -386,6 +496,7 @@ export default function Home() {
       friendIdsRef.current = friendIdSet;
       setMemberCards(initialCards);
       setFriendIds(friendIdSet);
+      setBlockedUserIds(blockedIdSet);
       setUserId(authenticatedUserId);
       setUsername(displayName);
       setAvatarUrl(currentAvatar);
@@ -495,6 +606,50 @@ export default function Home() {
                 ?.username ?? "một người bạn",
             content: newMessage.content,
           });
+        },
+      );
+
+      onlineChannel.on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "user_blocks",
+          filter: `blocker_id=eq.${authenticatedUserId}`,
+        },
+        (payload) => {
+          if (!isActive) return;
+
+          if (payload.eventType === "INSERT") {
+            const blockedId = String(
+              (payload.new as { blocked_id: string })
+                .blocked_id,
+            );
+
+            setBlockedUserIds((current) => {
+              const next = new Set(current);
+              next.add(blockedId);
+              return next;
+            });
+          }
+
+          if (payload.eventType === "DELETE") {
+            const blockedId = String(
+              (
+                payload.old as {
+                  blocked_id?: string;
+                }
+              ).blocked_id ?? "",
+            );
+
+            if (!blockedId) return;
+
+            setBlockedUserIds((current) => {
+              const next = new Set(current);
+              next.delete(blockedId);
+              return next;
+            });
+          }
         },
       );
 
@@ -1102,6 +1257,173 @@ export default function Home() {
     } finally {
       setSending(false);
     }
+  }
+
+  async function sendFriendRequestFromMessage(
+    targetUserId: string,
+    targetUsername: string,
+  ) {
+    if (
+      !userId ||
+      targetUserId === userId ||
+      friendIds.has(targetUserId) ||
+      friendRequestSentIds.has(targetUserId) ||
+      workingMemberId
+    ) {
+      return;
+    }
+
+    setWorkingMemberId(targetUserId);
+    setErrorMessage("");
+
+    const { error } = await supabase.rpc(
+      "send_friend_request",
+      {
+        p_receiver_id: targetUserId,
+      },
+    );
+
+    if (error) {
+      setErrorMessage(
+        `Không thể gửi lời mời kết bạn: ${error.message}`,
+      );
+    } else {
+      setFriendRequestSentIds((current) => {
+        const next = new Set(current);
+        next.add(targetUserId);
+        return next;
+      });
+
+      window.alert(
+        `Đã gửi lời mời kết bạn tới ${targetUsername}.`,
+      );
+    }
+
+    setOpenMessageMenuId(null);
+    setWorkingMemberId(null);
+  }
+
+  async function toggleBlockPublicMember(
+    targetUserId: string,
+    targetUsername: string,
+  ) {
+    if (
+      !userId ||
+      targetUserId === userId ||
+      workingMemberId
+    ) {
+      return;
+    }
+
+    const currentlyBlocked =
+      blockedUserIds.has(targetUserId);
+
+    if (
+      !currentlyBlocked &&
+      !window.confirm(
+        `Chặn ${targetUsername}? Hai người sẽ bị hủy kết bạn và không thể nhắn tin riêng hoặc gọi điện cho nhau.`,
+      )
+    ) {
+      return;
+    }
+
+    setWorkingMemberId(targetUserId);
+    setErrorMessage("");
+
+    if (currentlyBlocked) {
+      const { error } = await supabase
+        .from("user_blocks")
+        .delete()
+        .eq("blocker_id", userId)
+        .eq("blocked_id", targetUserId);
+
+      if (error) {
+        setErrorMessage(
+          `Không thể bỏ chặn: ${error.message}`,
+        );
+      } else {
+        setBlockedUserIds((current) => {
+          const next = new Set(current);
+          next.delete(targetUserId);
+          return next;
+        });
+      }
+    } else {
+      const { error } = await supabase
+        .from("user_blocks")
+        .insert({
+          blocker_id: userId,
+          blocked_id: targetUserId,
+        });
+
+      if (error) {
+        setErrorMessage(
+          `Không thể chặn thành viên: ${error.message}`,
+        );
+      } else {
+        setBlockedUserIds((current) => {
+          const next = new Set(current);
+          next.add(targetUserId);
+          return next;
+        });
+
+        setFriendIds((current) => {
+          const next = new Set(current);
+          next.delete(targetUserId);
+          friendIdsRef.current = next;
+          return next;
+        });
+
+        setOnlineUsers((current) =>
+          current.filter(
+            (member) =>
+              member.user_id !== targetUserId,
+          ),
+        );
+      }
+    }
+
+    setOpenMessageMenuId(null);
+    setWorkingMemberId(null);
+  }
+
+  function openReportDialog(message: MessageRow) {
+    setReportingMessage(message);
+    setReportCategory("profanity");
+    setReportDetails("");
+    setOpenMessageMenuId(null);
+  }
+
+  async function submitMessageReport() {
+    if (!reportingMessage || submittingReport) return;
+
+    setSubmittingReport(true);
+    setErrorMessage("");
+
+    const { error } = await supabase.rpc(
+      "report_public_message",
+      {
+        p_message_id: reportingMessage.id,
+        p_category: reportCategory,
+        p_details: reportDetails.trim() || null,
+      },
+    );
+
+    if (error) {
+      setErrorMessage(
+        `Không thể gửi báo cáo: ${error.message}`,
+      );
+      setSubmittingReport(false);
+      return;
+    }
+
+    setReportingMessage(null);
+    setReportDetails("");
+    setSubmittingReport(false);
+
+    window.alert(
+      "Đã gửi báo cáo. Quản trị viên sẽ kiểm tra nội dung này.",
+    );
   }
 
   function beginEditing(message: MessageRow) {
@@ -1731,36 +2053,170 @@ export default function Home() {
                     </div>
 
                     {!isEditing && (
-                      <div className="absolute right-2 top-2 hidden overflow-hidden rounded-md border border-black/20 bg-[#2b2d31] shadow-lg group-hover:flex">
+                      <div
+                        className="absolute right-2 top-2 z-40"
+                        data-public-message-menu
+                      >
                         <button
                           type="button"
-                          onClick={() => setReplyingTo(message)}
-                          className="px-2 py-1.5 text-xs text-gray-300 hover:bg-white/10"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setOpenMessageMenuId(
+                              (current) =>
+                                current === message.id
+                                  ? null
+                                  : message.id,
+                            );
+                          }}
+                          aria-label="Tùy chọn tin nhắn"
+                          aria-expanded={
+                            openMessageMenuId === message.id
+                          }
+                          title="Tùy chọn"
+                          className={`flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-[#2b2d31] pb-1 text-xl font-bold leading-none text-gray-300 shadow-lg transition hover:bg-[#1e1f22] hover:text-white ${
+                            openMessageMenuId === message.id
+                              ? "opacity-100"
+                              : "opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                          }`}
                         >
-                          Trả lời
+                          …
                         </button>
 
-                        {isOwnMessage && (
-                          <>
+                        {openMessageMenuId === message.id && (
+                          <div className="absolute right-0 top-10 z-50 min-w-56 overflow-hidden rounded-xl border border-white/10 bg-[#1e1f22] py-1 shadow-2xl">
                             <button
                               type="button"
-                              onClick={() => beginEditing(message)}
-                              className="px-2 py-1.5 text-xs text-gray-300 hover:bg-white/10"
+                              onClick={() => {
+                                setReplyingTo(message);
+                                setOpenMessageMenuId(null);
+                              }}
+                              className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-white/10"
                             >
-                              Sửa
+                              <span>↩️</span>
+                              <span>Trả lời</span>
                             </button>
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void deleteMessage(message.id)
-                              }
-                              disabled={isWorking}
-                              className="px-2 py-1.5 text-xs text-red-300 hover:bg-red-500/15"
-                            >
-                              Xóa
-                            </button>
-                          </>
+                            {isOwnMessage ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMessageMenuId(null);
+                                    beginEditing(message);
+                                  }}
+                                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-white/10"
+                                >
+                                  <span>✏️</span>
+                                  <span>Sửa tin nhắn</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMessageMenuId(null);
+                                    void deleteMessage(message.id);
+                                  }}
+                                  disabled={isWorking}
+                                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-red-300 hover:bg-red-500/15 disabled:opacity-50"
+                                >
+                                  <span>🗑️</span>
+                                  <span>Xóa tin nhắn</span>
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                {friendIds.has(message.user_id) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMessageMenuId(null);
+                                      window.location.href = `/messages?user=${encodeURIComponent(
+                                        message.user_id,
+                                      )}`;
+                                    }}
+                                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-white/10"
+                                  >
+                                    <span>💬</span>
+                                    <span>Nhắn tin riêng</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void sendFriendRequestFromMessage(
+                                        message.user_id,
+                                        memberCards[message.user_id]
+                                          ?.username ??
+                                          message.username,
+                                      )
+                                    }
+                                    disabled={
+                                      workingMemberId ===
+                                        message.user_id ||
+                                      friendRequestSentIds.has(
+                                        message.user_id,
+                                      )
+                                    }
+                                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-white/10 disabled:opacity-50"
+                                  >
+                                    <span>➕</span>
+                                    <span>
+                                      {friendRequestSentIds.has(
+                                        message.user_id,
+                                      )
+                                        ? "Đã gửi lời mời"
+                                        : "Thêm bạn bè"}
+                                    </span>
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void toggleBlockPublicMember(
+                                      message.user_id,
+                                      memberCards[message.user_id]
+                                        ?.username ??
+                                        message.username,
+                                    )
+                                  }
+                                  disabled={
+                                    workingMemberId ===
+                                    message.user_id
+                                  }
+                                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-orange-300 hover:bg-orange-500/15 disabled:opacity-50"
+                                >
+                                  <span>
+                                    {blockedUserIds.has(
+                                      message.user_id,
+                                    )
+                                      ? "🔓"
+                                      : "🚫"}
+                                  </span>
+                                  <span>
+                                    {blockedUserIds.has(
+                                      message.user_id,
+                                    )
+                                      ? "Bỏ chặn"
+                                      : "Chặn thành viên"}
+                                  </span>
+                                </button>
+
+                                <div className="my-1 h-px bg-white/10" />
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openReportDialog(message)
+                                  }
+                                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-red-300 hover:bg-red-500/15"
+                                >
+                                  <span>🚩</span>
+                                  <span>Báo cáo nội dung</span>
+                                </button>
+                              </>
+                            )}
+                          </div>
                         )}
                       </div>
                     )}
@@ -1892,6 +2348,16 @@ export default function Home() {
           </button>
         </div>
 
+        <div className="mb-4 rounded-2xl border border-white/10 bg-black/10 p-2">
+          <FriendManager
+            triggerVariant="sidebar"
+            initialTab="add"
+          />
+          <p className="mt-2 px-1 text-center text-[11px] text-gray-500">
+            Tìm bằng Gmail, tên hoặc ID #000000
+          </p>
+        </div>
+
         {onlineUsers.map((member) => (
           <button
             key={member.user_id}
@@ -1943,6 +2409,150 @@ export default function Home() {
         ))}
       </aside>
 
+      {reportingMessage && (
+        <div
+          className="fixed inset-0 z-[180] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Báo cáo tin nhắn"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setReportingMessage(null);
+            }
+          }}
+        >
+          <section className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-white/10 bg-[#24262b] text-white shadow-2xl">
+            <header className="flex items-start justify-between border-b border-white/10 p-5">
+              <div>
+                <h2 className="text-xl font-bold">
+                  Báo cáo tin nhắn
+                </h2>
+                <p className="mt-1 text-sm text-gray-400">
+                  Chọn lý do chính xác để quản trị viên xử lý nhanh hơn.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setReportingMessage(null)}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xl hover:bg-white/15"
+                aria-label="Đóng"
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="space-y-4 p-5">
+              <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <strong>
+                    {memberCards[reportingMessage.user_id]
+                      ?.username ?? reportingMessage.username}
+                  </strong>
+                  <MemberBadge
+                    role={
+                      memberCards[reportingMessage.user_id]
+                        ?.role
+                    }
+                  />
+                </div>
+
+                <p className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm text-gray-300">
+                  {reportingMessage.content ||
+                    "[Tin nhắn chỉ có tệp đính kèm]"}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {reportCategoryOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() =>
+                      setReportCategory(option.id)
+                    }
+                    className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition ${
+                      reportCategory === option.id
+                        ? "border-red-400/50 bg-red-500/15"
+                        : "border-white/10 bg-black/10 hover:bg-white/5"
+                    }`}
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-lg">
+                      {option.icon}
+                    </span>
+
+                    <span className="min-w-0 flex-1">
+                      <strong className="block text-sm">
+                        {option.label}
+                      </strong>
+                      <span className="mt-0.5 block text-xs text-gray-400">
+                        {option.description}
+                      </span>
+                    </span>
+
+                    <span
+                      className={`h-4 w-4 rounded-full border ${
+                        reportCategory === option.id
+                          ? "border-white bg-white"
+                          : "border-gray-500"
+                      }`}
+                    />
+                  </button>
+                ))}
+              </div>
+
+              <div>
+                <label
+                  htmlFor="report-details"
+                  className="mb-2 block text-sm font-bold"
+                >
+                  Mô tả thêm{" "}
+                  <span className="font-normal text-gray-500">
+                    (không bắt buộc)
+                  </span>
+                </label>
+                <textarea
+                  id="report-details"
+                  value={reportDetails}
+                  onChange={(event) =>
+                    setReportDetails(event.target.value)
+                  }
+                  maxLength={500}
+                  rows={3}
+                  placeholder="Ví dụ: Tin nhắn có đường link đáng ngờ..."
+                  className="w-full resize-none rounded-xl bg-[#1e1f22] px-4 py-3 outline-none ring-red-500 focus:ring-2"
+                />
+                <p className="mt-1 text-right text-xs text-gray-500">
+                  {reportDetails.length}/500
+                </p>
+              </div>
+            </div>
+
+            <footer className="flex gap-3 border-t border-white/10 p-5">
+              <button
+                type="button"
+                onClick={() => setReportingMessage(null)}
+                className="flex-1 rounded-xl bg-white/10 px-4 py-3 font-bold hover:bg-white/15"
+              >
+                Hủy
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void submitMessageReport()
+                }
+                disabled={submittingReport}
+                className="flex-1 rounded-xl bg-red-600 px-4 py-3 font-bold hover:bg-red-500 disabled:opacity-50"
+              >
+                {submittingReport
+                  ? "Đang gửi..."
+                  : "Gửi báo cáo"}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

@@ -751,7 +751,17 @@ export default function AdminPage() {
             </p>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = "/admin/reports";
+              }}
+              className="rounded-md bg-orange-500/15 px-4 py-2 text-sm font-semibold text-orange-300 hover:bg-orange-500/25"
+            >
+              Báo cáo
+            </button>
+
             {currentRole === "admin" && (
               <button
                 type="button"
