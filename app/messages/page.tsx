@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { createClient } from "@/utils/supabase/client";
-import { notifyPrivateMessage } from "@/utils/notifications";
+import { getNotificationsEnabled } from "@/utils/notifications";
 
 const supabase = createClient();
 
@@ -82,6 +82,282 @@ type ConversationTimelineItem =
       call: CallHistoryRow;
     };
 
+
+type ChatColorId =
+  | "indigo"
+  | "blue"
+  | "green"
+  | "pink"
+  | "orange"
+  | "red";
+
+type NotificationToneId =
+  | "default"
+  | "soft"
+  | "bell"
+  | "off";
+
+type PrivateChatPreference = {
+  chat_color: ChatColorId;
+  notification_tone: NotificationToneId;
+  notifications_enabled: boolean;
+};
+
+type PrivateChatPreferenceRow = PrivateChatPreference & {
+  user_id: string;
+  other_user_id: string;
+  updated_at: string;
+};
+
+const defaultPrivateChatPreference: PrivateChatPreference = {
+  chat_color: "indigo",
+  notification_tone: "default",
+  notifications_enabled: true,
+};
+
+const chatColorOptions: Array<{
+  id: ChatColorId;
+  label: string;
+  hex: string;
+  soft: string;
+  border: string;
+}> = [
+  {
+    id: "indigo",
+    label: "Tím",
+    hex: "#6366f1",
+    soft: "rgba(99, 102, 241, 0.20)",
+    border: "rgba(129, 140, 248, 0.38)",
+  },
+  {
+    id: "blue",
+    label: "Xanh dương",
+    hex: "#0a7cff",
+    soft: "rgba(10, 124, 255, 0.20)",
+    border: "rgba(96, 165, 250, 0.40)",
+  },
+  {
+    id: "green",
+    label: "Xanh lá",
+    hex: "#16a34a",
+    soft: "rgba(22, 163, 74, 0.20)",
+    border: "rgba(74, 222, 128, 0.38)",
+  },
+  {
+    id: "pink",
+    label: "Hồng",
+    hex: "#db2777",
+    soft: "rgba(219, 39, 119, 0.20)",
+    border: "rgba(244, 114, 182, 0.40)",
+  },
+  {
+    id: "orange",
+    label: "Cam",
+    hex: "#ea580c",
+    soft: "rgba(234, 88, 12, 0.20)",
+    border: "rgba(251, 146, 60, 0.40)",
+  },
+  {
+    id: "red",
+    label: "Đỏ",
+    hex: "#dc2626",
+    soft: "rgba(220, 38, 38, 0.20)",
+    border: "rgba(248, 113, 113, 0.40)",
+  },
+];
+
+const notificationToneOptions: Array<{
+  id: NotificationToneId;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "default",
+    label: "Mặc định",
+    description: "Hai tiếng ngắn, rõ ràng",
+  },
+  {
+    id: "soft",
+    label: "Nhẹ nhàng",
+    description: "Âm thanh nhỏ và êm",
+  },
+  {
+    id: "bell",
+    label: "Chuông",
+    description: "Ba nốt chuông nổi bật",
+  },
+  {
+    id: "off",
+    label: "Không có âm thanh",
+    description: "Vẫn hiện thông báo nếu được bật",
+  },
+];
+
+type BrowserWindowWithAudio = Window &
+  typeof globalThis & {
+    webkitAudioContext?: typeof AudioContext;
+  };
+
+async function playPrivateChatTone(
+  tone: NotificationToneId,
+) {
+  if (tone === "off" || typeof window === "undefined") {
+    return;
+  }
+
+  const browserWindow =
+    window as BrowserWindowWithAudio;
+  const AudioContextConstructor =
+    window.AudioContext ??
+    browserWindow.webkitAudioContext;
+
+  if (!AudioContextConstructor) return;
+
+  const patterns: Record<
+    Exclude<NotificationToneId, "off">,
+    Array<{
+      frequency: number;
+      delay: number;
+      duration: number;
+      volume: number;
+    }>
+  > = {
+    default: [
+      {
+        frequency: 720,
+        delay: 0,
+        duration: 0.10,
+        volume: 0.10,
+      },
+      {
+        frequency: 920,
+        delay: 0.14,
+        duration: 0.12,
+        volume: 0.10,
+      },
+    ],
+    soft: [
+      {
+        frequency: 540,
+        delay: 0,
+        duration: 0.16,
+        volume: 0.055,
+      },
+      {
+        frequency: 660,
+        delay: 0.18,
+        duration: 0.18,
+        volume: 0.05,
+      },
+    ],
+    bell: [
+      {
+        frequency: 660,
+        delay: 0,
+        duration: 0.13,
+        volume: 0.09,
+      },
+      {
+        frequency: 880,
+        delay: 0.15,
+        duration: 0.15,
+        volume: 0.10,
+      },
+      {
+        frequency: 1100,
+        delay: 0.32,
+        duration: 0.18,
+        volume: 0.09,
+      },
+    ],
+  };
+
+  const context = new AudioContextConstructor();
+
+  if (context.state === "suspended") {
+    await context.resume();
+  }
+
+  const startAt = context.currentTime + 0.03;
+  const selectedPattern = patterns[tone];
+
+  selectedPattern.forEach((note) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const noteStart = startAt + note.delay;
+    const noteEnd = noteStart + note.duration;
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(
+      note.frequency,
+      noteStart,
+    );
+
+    gain.gain.setValueAtTime(0.0001, noteStart);
+    gain.gain.exponentialRampToValueAtTime(
+      note.volume,
+      noteStart + 0.02,
+    );
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      noteEnd,
+    );
+
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+
+    oscillator.start(noteStart);
+    oscillator.stop(noteEnd + 0.02);
+  });
+
+  const totalDuration = Math.max(
+    ...selectedPattern.map(
+      (note) => note.delay + note.duration,
+    ),
+  );
+
+  window.setTimeout(() => {
+    void context.close();
+  }, Math.ceil((totalDuration + 0.15) * 1000));
+}
+
+function showPrivateMessageNotification({
+  messageId,
+  senderId,
+  senderName,
+  content,
+}: {
+  messageId: number;
+  senderId: string;
+  senderName: string;
+  content: string;
+}) {
+  if (
+    !getNotificationsEnabled() ||
+    !("Notification" in window) ||
+    Notification.permission !== "granted"
+  ) {
+    return;
+  }
+
+  const notification = new Notification(
+    `Tin nhắn từ ${senderName}`,
+    {
+      body: content,
+      icon: "/icon.png",
+      tag: `private-message-${messageId}`,
+    },
+  );
+
+  notification.onclick = () => {
+    window.focus();
+    window.location.href = `/messages?user=${encodeURIComponent(
+      senderId,
+    )}`;
+    notification.close();
+  };
+}
+
 export default function MessagesPage() {
   const [currentUserId, setCurrentUserId] = useState("");
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -126,13 +402,62 @@ export default function MessagesPage() {
     useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [showContacts, setShowContacts] = useState(true);
+  const [
+    privateChatPreferences,
+    setPrivateChatPreferences,
+  ] = useState<Record<string, PrivateChatPreference>>({});
+  const [
+    showPrivateChatSettings,
+    setShowPrivateChatSettings,
+  ] = useState(false);
+  const [
+    savingPrivateChatSettings,
+    setSavingPrivateChatSettings,
+  ] = useState(false);
+  const [draftChatColor, setDraftChatColor] =
+    useState<ChatColorId>("indigo");
+  const [
+    draftNotificationTone,
+    setDraftNotificationTone,
+  ] = useState<NotificationToneId>("default");
+  const [
+    draftNotificationsEnabled,
+    setDraftNotificationsEnabled,
+  ] = useState(true);
 
   const selectedProfileRef = useRef<ProfileRow | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const privateChatPreferencesRef = useRef<
+    Record<string, PrivateChatPreference>
+  >({});
 
   useEffect(() => {
     selectedProfileRef.current = selectedProfile;
   }, [selectedProfile]);
+
+  useEffect(() => {
+    privateChatPreferencesRef.current =
+      privateChatPreferences;
+  }, [privateChatPreferences]);
+
+  const selectedPrivateChatPreference = useMemo(
+    () =>
+      selectedProfile
+        ? privateChatPreferences[selectedProfile.id] ??
+          defaultPrivateChatPreference
+        : defaultPrivateChatPreference,
+    [privateChatPreferences, selectedProfile],
+  );
+
+  const activeChatColor = useMemo(
+    () =>
+      chatColorOptions.find(
+        (color) =>
+          color.id ===
+          selectedPrivateChatPreference.chat_color,
+      ) ?? chatColorOptions[0],
+    [selectedPrivateChatPreference.chat_color],
+  );
 
   const isSuspended = useMemo(() => {
     if (!suspension) return false;
@@ -332,6 +657,10 @@ export default function MessagesPage() {
         { data: suspensionData, error: suspensionError },
         { data: unreadData, error: unreadError },
         { data: blockData, error: blockError },
+        {
+          data: preferenceData,
+          error: preferenceError,
+        },
       ] = await Promise.all([
         supabase
           .from("profiles")
@@ -354,6 +683,12 @@ export default function MessagesPage() {
           .from("user_blocks")
           .select("blocked_id")
           .eq("blocker_id", user.id),
+        supabase
+          .from("private_chat_preferences")
+          .select(
+            "user_id, other_user_id, chat_color, notification_tone, notifications_enabled, updated_at",
+          )
+          .eq("user_id", user.id),
       ]);
 
       if (!active) return;
@@ -420,6 +755,28 @@ export default function MessagesPage() {
         );
       }
 
+      if (!preferenceError) {
+        const preferenceMap = (
+          (preferenceData ?? []) as PrivateChatPreferenceRow[]
+        ).reduce<Record<string, PrivateChatPreference>>(
+          (current, preference) => {
+            current[preference.other_user_id] = {
+              chat_color: preference.chat_color,
+              notification_tone:
+                preference.notification_tone,
+              notifications_enabled:
+                preference.notifications_enabled,
+            };
+            return current;
+          },
+          {},
+        );
+
+        setPrivateChatPreferences(preferenceMap);
+        privateChatPreferencesRef.current =
+          preferenceMap;
+      }
+
       realtimeChannel = supabase
         .channel(`private-messages-${user.id}`)
         .on(
@@ -459,14 +816,25 @@ export default function MessagesPage() {
                   document.visibilityState !== "visible" ||
                   !belongsToSelected
                 ) {
-                  void notifyPrivateMessage({
-                    messageId: newMessage.id,
-                    senderId: newMessage.sender_id,
-                    senderName:
-                      senderProfile?.username ??
-                      "một thành viên",
-                    content: newMessage.content,
-                  });
+                  const preference =
+                    privateChatPreferencesRef.current[
+                      newMessage.sender_id
+                    ] ?? defaultPrivateChatPreference;
+
+                  if (preference.notifications_enabled) {
+                    void playPrivateChatTone(
+                      preference.notification_tone,
+                    );
+
+                    showPrivateMessageNotification({
+                      messageId: newMessage.id,
+                      senderId: newMessage.sender_id,
+                      senderName:
+                        senderProfile?.username ??
+                        "một thành viên",
+                      content: newMessage.content,
+                    });
+                  }
                 }
               }
 
@@ -636,6 +1004,60 @@ export default function MessagesPage() {
                 setBlockedUserIds((current) => {
                   const next = new Set(current);
                   next.delete(oldBlock.blocked_id as string);
+                  return next;
+                });
+              }
+            }
+          },
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "private_chat_preferences",
+            filter: `user_id=eq.${user.id}`,
+          },
+          (payload) => {
+            if (!active) return;
+
+            if (
+              payload.eventType === "INSERT" ||
+              payload.eventType === "UPDATE"
+            ) {
+              const preference =
+                payload.new as PrivateChatPreferenceRow;
+
+              setPrivateChatPreferences((current) => {
+                const next = {
+                  ...current,
+                  [preference.other_user_id]: {
+                    chat_color: preference.chat_color,
+                    notification_tone:
+                      preference.notification_tone,
+                    notifications_enabled:
+                      preference.notifications_enabled,
+                  },
+                };
+
+                privateChatPreferencesRef.current = next;
+                return next;
+              });
+            }
+
+            if (payload.eventType === "DELETE") {
+              const preference =
+                payload.old as Partial<PrivateChatPreferenceRow>;
+
+              if (preference.other_user_id) {
+                setPrivateChatPreferences((current) => {
+                  const next = { ...current };
+                  delete next[
+                    preference.other_user_id as string
+                  ];
+
+                  privateChatPreferencesRef.current =
+                    next;
                   return next;
                 });
               }
@@ -905,6 +1327,7 @@ export default function MessagesPage() {
   function selectMember(profile: ProfileRow) {
     setSelectedProfile(profile);
     setShowContacts(false);
+    setShowPrivateChatSettings(false);
     setMessageInput("");
 
     const nextUrl = `/messages?user=${encodeURIComponent(
@@ -1022,6 +1445,83 @@ export default function MessagesPage() {
     }
 
     window.location.href = `/call/${createdCall.id}`;
+  }
+
+  function openPrivateChatSettings() {
+    if (!selectedProfile) return;
+
+    const preference =
+      privateChatPreferences[selectedProfile.id] ??
+      defaultPrivateChatPreference;
+
+    setDraftChatColor(preference.chat_color);
+    setDraftNotificationTone(
+      preference.notification_tone,
+    );
+    setDraftNotificationsEnabled(
+      preference.notifications_enabled,
+    );
+    setShowPrivateChatSettings(true);
+  }
+
+  async function previewNotificationTone() {
+    if (!draftNotificationsEnabled) return;
+    await playPrivateChatTone(draftNotificationTone);
+  }
+
+  async function savePrivateChatSettings() {
+    if (
+      !selectedProfile ||
+      !currentUserId ||
+      savingPrivateChatSettings
+    ) {
+      return;
+    }
+
+    setSavingPrivateChatSettings(true);
+    setErrorMessage("");
+
+    const nextPreference: PrivateChatPreference = {
+      chat_color: draftChatColor,
+      notification_tone: draftNotificationTone,
+      notifications_enabled:
+        draftNotificationsEnabled,
+    };
+
+    const { error } = await supabase
+      .from("private_chat_preferences")
+      .upsert(
+        {
+          user_id: currentUserId,
+          other_user_id: selectedProfile.id,
+          ...nextPreference,
+          updated_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "user_id,other_user_id",
+        },
+      );
+
+    if (error) {
+      setErrorMessage(
+        `Không thể lưu cài đặt tin nhắn riêng: ${error.message}`,
+      );
+      setSavingPrivateChatSettings(false);
+      return;
+    }
+
+    setPrivateChatPreferences((current) => {
+      const next = {
+        ...current,
+        [selectedProfile.id]: nextPreference,
+      };
+
+      privateChatPreferencesRef.current = next;
+      return next;
+    });
+
+    setShowPrivateChatSettings(false);
+    setSavingPrivateChatSettings(false);
   }
 
   async function toggleBlockSelected() {
@@ -1320,7 +1820,12 @@ export default function MessagesPage() {
       <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
         {selectedProfile ? (
           <>
-            <header className="flex h-[64px] shrink-0 items-center gap-3 border-b border-black/20 px-4 shadow">
+            <header
+              className="flex h-[64px] shrink-0 items-center gap-3 border-b px-4 shadow"
+              style={{
+                borderBottomColor: activeChatColor.border,
+              }}
+            >
               <button
                 type="button"
                 onClick={() => setShowContacts(true)}
@@ -1336,7 +1841,12 @@ export default function MessagesPage() {
                   className="h-10 w-10 rounded-full object-cover"
                 />
               ) : (
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-500 font-bold">
+                <div
+                  className="flex h-10 w-10 items-center justify-center rounded-full font-bold"
+                  style={{
+                    backgroundColor: activeChatColor.hex,
+                  }}
+                >
                   {selectedProfile.username
                     .charAt(0)
                     .toUpperCase()}
@@ -1378,7 +1888,10 @@ export default function MessagesPage() {
                     isSuspended
                   }
                   title="Gọi video"
-                  className="rounded bg-indigo-500 px-3 py-2 text-sm font-semibold hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded px-3 py-2 text-sm font-semibold transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                  style={{
+                    backgroundColor: activeChatColor.hex,
+                  }}
                 >
                   {startingCallType === "video"
                     ? "..."
@@ -1387,33 +1900,27 @@ export default function MessagesPage() {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    void toggleBlockSelected()
-                  }
-                  disabled={
-                    blockingUserId === selectedProfile.id
-                  }
-                  className={`rounded px-3 py-2 text-sm font-semibold disabled:opacity-50 ${
-                    isSelectedBlocked
-                      ? "bg-green-600 hover:bg-green-500"
-                      : "bg-red-500/20 text-red-300 hover:bg-red-500/30"
-                  }`}
-                >
-                  {blockingUserId === selectedProfile.id
-                    ? "Đang xử lý..."
-                    : isSelectedBlocked
-                      ? "Bỏ chặn"
-                      : "Chặn"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    window.location.href = "/settings";
+                  onClick={openPrivateChatSettings}
+                  title="Cài đặt cuộc trò chuyện"
+                  aria-label="Cài đặt cuộc trò chuyện"
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/15"
+                  style={{
+                    boxShadow: `inset 0 0 0 1px ${activeChatColor.border}`,
                   }}
-                  className="rounded bg-white/10 px-3 py-2 text-sm hover:bg-white/15"
                 >
-                  Cài đặt
+                  <svg
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    className="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-3v-.08a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7 15.4a1.7 1.7 0 0 0-1.56-1.03H5.3v-3h.14A1.7 1.7 0 0 0 7 10.34a1.7 1.7 0 0 0-.34-1.88L6.6 8.4l2.12-2.12.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 11.7 5.1V5h3v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.14v3h-.14A1.7 1.7 0 0 0 19.4 15Z" />
+                  </svg>
                 </button>
               </div>
             </header>
@@ -1493,9 +2000,19 @@ export default function MessagesPage() {
                                 incomingMissed
                                   ? "rounded-bl-md border-red-500/30 bg-red-500/10"
                                   : outgoing
-                                    ? "rounded-br-md border-indigo-400/30 bg-indigo-500/20"
+                                    ? "rounded-br-md"
                                     : "rounded-bl-md border-white/10 bg-[#2b2d31]"
                               }`}
+                              style={
+                                outgoing && !incomingMissed
+                                  ? {
+                                      backgroundColor:
+                                        activeChatColor.soft,
+                                      borderColor:
+                                        activeChatColor.border,
+                                    }
+                                  : undefined
+                              }
                             >
                               <div className="flex items-center gap-2.5">
                                 <div
@@ -1621,9 +2138,17 @@ export default function MessagesPage() {
                           <div
                             className={`relative max-w-[85%] rounded-2xl px-4 py-3 md:max-w-[70%] ${
                               isMine
-                                ? "rounded-br-md bg-indigo-500"
+                                ? "rounded-br-md"
                                 : "rounded-bl-md bg-[#2b2d31]"
                             }`}
+                            style={
+                              isMine
+                                ? {
+                                    backgroundColor:
+                                      activeChatColor.hex,
+                                  }
+                                : undefined
+                            }
                           >
                             {isEditing ? (
                               <div className="min-w-64">
@@ -1678,7 +2203,7 @@ export default function MessagesPage() {
                                 <div
                                   className={`mt-1 text-[11px] ${
                                     isMine
-                                      ? "text-indigo-100"
+                                      ? "text-white/75"
                                       : "text-gray-500"
                                   }`}
                                 >
@@ -1765,7 +2290,10 @@ export default function MessagesPage() {
                     isSelectedBlocked ||
                     !messageInput.trim()
                   }
-                  className="ml-3 my-1.5 rounded bg-indigo-500 px-4 text-sm font-semibold disabled:opacity-50"
+                  className="ml-3 my-1.5 rounded px-4 text-sm font-semibold transition hover:brightness-110 disabled:opacity-50"
+                  style={{
+                    backgroundColor: activeChatColor.hex,
+                  }}
                 >
                   {sending ? "Đang gửi..." : "Gửi"}
                 </button>
@@ -1795,6 +2323,294 @@ export default function MessagesPage() {
           </div>
         )}
       </section>
+
+      {showPrivateChatSettings && selectedProfile && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Cài đặt tin nhắn riêng"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setShowPrivateChatSettings(false);
+            }
+          }}
+        >
+          <section className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-white/10 bg-[#24262b] text-white shadow-2xl">
+            <header className="flex items-center gap-3 border-b border-white/10 p-5">
+              {selectedProfile.avatar_url ? (
+                <img
+                  src={selectedProfile.avatar_url}
+                  alt={selectedProfile.username}
+                  className="h-12 w-12 rounded-full object-cover"
+                />
+              ) : (
+                <div
+                  className="flex h-12 w-12 items-center justify-center rounded-full text-lg font-bold"
+                  style={{
+                    backgroundColor:
+                      chatColorOptions.find(
+                        (color) =>
+                          color.id === draftChatColor,
+                      )?.hex ?? activeChatColor.hex,
+                  }}
+                >
+                  {selectedProfile.username
+                    .charAt(0)
+                    .toUpperCase()}
+                </div>
+              )}
+
+              <div className="min-w-0 flex-1">
+                <h2 className="truncate text-lg font-bold">
+                  Cài đặt cuộc trò chuyện
+                </h2>
+                <p className="truncate text-sm text-gray-400">
+                  {selectedProfile.username}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowPrivateChatSettings(false)
+                }
+                aria-label="Đóng"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xl text-gray-300 hover:bg-white/15 hover:text-white"
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="space-y-5 p-5">
+              <section className="rounded-2xl bg-black/15 p-4">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="flex h-10 w-10 items-center justify-center rounded-full text-lg"
+                    style={{
+                      backgroundColor:
+                        chatColorOptions.find(
+                          (color) =>
+                            color.id === draftChatColor,
+                        )?.soft,
+                    }}
+                  >
+                    🎨
+                  </div>
+                  <div>
+                    <h3 className="font-bold">
+                      Màu đoạn chat
+                    </h3>
+                    <p className="text-xs text-gray-400">
+                      Đổi màu tin nhắn của bạn trong cuộc trò chuyện này.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-6 gap-3">
+                  {chatColorOptions.map((color) => {
+                    const selected =
+                      draftChatColor === color.id;
+
+                    return (
+                      <button
+                        key={color.id}
+                        type="button"
+                        onClick={() =>
+                          setDraftChatColor(color.id)
+                        }
+                        title={color.label}
+                        aria-label={`Chọn màu ${color.label}`}
+                        className="relative aspect-square rounded-full transition hover:scale-105"
+                        style={{
+                          backgroundColor: color.hex,
+                          boxShadow: selected
+                            ? "0 0 0 3px #24262b, 0 0 0 5px #ffffff"
+                            : "none",
+                        }}
+                      >
+                        {selected && (
+                          <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-white">
+                            ✓
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section className="rounded-2xl bg-black/15 p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-lg">
+                    🔔
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-bold">
+                      Thông báo tin nhắn
+                    </h3>
+                    <p className="text-xs text-gray-400">
+                      Chọn chuông riêng cho cuộc trò chuyện này.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={
+                      draftNotificationsEnabled
+                    }
+                    onClick={() =>
+                      setDraftNotificationsEnabled(
+                        (current) => !current,
+                      )
+                    }
+                    className={`relative h-7 w-12 rounded-full transition ${
+                      draftNotificationsEnabled
+                        ? "bg-green-500"
+                        : "bg-gray-600"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${
+                        draftNotificationsEnabled
+                          ? "left-6"
+                          : "left-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div
+                  className={`mt-4 space-y-2 ${
+                    draftNotificationsEnabled
+                      ? ""
+                      : "pointer-events-none opacity-45"
+                  }`}
+                >
+                  {notificationToneOptions.map((tone) => (
+                    <button
+                      key={tone.id}
+                      type="button"
+                      onClick={() =>
+                        setDraftNotificationTone(tone.id)
+                      }
+                      className={`flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition ${
+                        draftNotificationTone === tone.id
+                          ? "border-white/30 bg-white/10"
+                          : "border-white/5 bg-black/10 hover:bg-white/5"
+                      }`}
+                    >
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10">
+                        {tone.id === "off" ? "🔕" : "🔔"}
+                      </span>
+
+                      <span className="min-w-0 flex-1">
+                        <strong className="block text-sm">
+                          {tone.label}
+                        </strong>
+                        <span className="block truncate text-xs text-gray-400">
+                          {tone.description}
+                        </span>
+                      </span>
+
+                      <span
+                        className={`h-4 w-4 rounded-full border ${
+                          draftNotificationTone === tone.id
+                            ? "border-white bg-white"
+                            : "border-gray-500"
+                        }`}
+                      />
+                    </button>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void previewNotificationTone()
+                    }
+                    disabled={
+                      draftNotificationTone === "off"
+                    }
+                    className="mt-2 w-full rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    ▶ Nghe thử chuông
+                  </button>
+                </div>
+              </section>
+
+              <section className="rounded-2xl bg-black/15 p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/15 text-lg">
+                    🛡️
+                  </div>
+                  <div>
+                    <h3 className="font-bold">
+                      Quyền riêng tư
+                    </h3>
+                    <p className="text-xs text-gray-400">
+                      Quản lý việc chặn thành viên trong cuộc trò chuyện này.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    void toggleBlockSelected()
+                  }
+                  disabled={
+                    blockingUserId === selectedProfile.id
+                  }
+                  className={`mt-4 w-full rounded-xl px-4 py-3 text-sm font-bold transition disabled:opacity-50 ${
+                    isSelectedBlocked
+                      ? "bg-green-600 hover:bg-green-500"
+                      : "bg-red-500/15 text-red-300 hover:bg-red-500/25"
+                  }`}
+                >
+                  {blockingUserId === selectedProfile.id
+                    ? "Đang xử lý..."
+                    : isSelectedBlocked
+                      ? `Bỏ chặn ${selectedProfile.username}`
+                      : `Chặn ${selectedProfile.username}`}
+                </button>
+              </section>
+            </div>
+
+            <footer className="flex gap-3 border-t border-white/10 p-5">
+              <button
+                type="button"
+                onClick={() =>
+                  setShowPrivateChatSettings(false)
+                }
+                className="flex-1 rounded-xl bg-white/10 px-4 py-3 font-semibold hover:bg-white/15"
+              >
+                Hủy
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void savePrivateChatSettings()
+                }
+                disabled={savingPrivateChatSettings}
+                className="flex-1 rounded-xl px-4 py-3 font-bold text-white transition hover:brightness-110 disabled:opacity-50"
+                style={{
+                  backgroundColor:
+                    chatColorOptions.find(
+                      (color) =>
+                        color.id === draftChatColor,
+                    )?.hex ?? activeChatColor.hex,
+                }}
+              >
+                {savingPrivateChatSettings
+                  ? "Đang lưu..."
+                  : "Lưu cài đặt"}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
