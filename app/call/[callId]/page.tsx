@@ -6,6 +6,7 @@ import {
   ControlBar,
   GridLayout,
   LiveKitRoom,
+  MediaDeviceMenu,
   ParticipantTile,
   RoomAudioRenderer,
   useTracks,
@@ -161,8 +162,8 @@ function CompactCallStage({
           </GridLayout>
         </section>
 
-        <footer className="shrink-0">
-          <div className="mx-auto flex w-fit max-w-full items-center gap-2 overflow-x-auto rounded-2xl border border-white/10 bg-[#1b1c21]/95 p-2 shadow-2xl backdrop-blur [&_.lk-button]:!h-11 [&_.lk-button]:!min-w-11 [&_.lk-button]:!rounded-xl [&_.lk-button]:!border-white/10 [&_.lk-button]:!bg-white/10 [&_.lk-button]:!px-3 [&_.lk-button]:!text-white [&_.lk-button:hover]:!bg-white/15 [&_.lk-control-bar]:!gap-1 [&_.lk-control-bar]:!border-0 [&_.lk-control-bar]:!bg-transparent [&_.lk-control-bar]:!p-0">
+        <footer className="relative z-40 shrink-0 overflow-visible">
+          <div className="relative mx-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-2 overflow-visible rounded-2xl border border-white/10 bg-[#1b1c21] p-2 shadow-2xl [&_.lk-button]:!h-11 [&_.lk-button]:!min-w-11 [&_.lk-button]:!rounded-xl [&_.lk-button]:!border-white/10 [&_.lk-button]:!bg-white/10 [&_.lk-button]:!px-3 [&_.lk-button]:!text-white [&_.lk-button:hover]:!bg-white/15 [&_.lk-button-group-menu]:!hidden [&_.lk-control-bar]:!gap-1 [&_.lk-control-bar]:!border-0 [&_.lk-control-bar]:!bg-transparent [&_.lk-control-bar]:!p-0 [&_.lk-device-menu]:!z-[300] [&_.lk-device-menu]:!max-h-[55vh] [&_.lk-device-menu]:!overflow-y-auto">
             <ControlBar
               variation="minimal"
               saveUserChoices
@@ -175,7 +176,21 @@ function CompactCallStage({
               }}
             />
 
-            <div className="h-8 w-px shrink-0 bg-white/10" />
+            <div className="hidden h-8 w-px shrink-0 bg-white/10 sm:block" />
+
+            <div className="flex items-center gap-1">
+              <MediaDeviceMenu kind="audioinput">
+                🎙 Chọn mic
+              </MediaDeviceMenu>
+
+              {callType === "video" && (
+                <MediaDeviceMenu kind="videoinput">
+                  📷 Chọn camera
+                </MediaDeviceMenu>
+              )}
+            </div>
+
+            <div className="hidden h-8 w-px shrink-0 bg-white/10 sm:block" />
 
             <button
               type="button"
@@ -186,6 +201,10 @@ function CompactCallStage({
               {ending ? "Đang kết thúc..." : "📵 Kết thúc"}
             </button>
           </div>
+
+          <p className="mt-1 text-center text-[11px] text-gray-500">
+            Dùng “Chọn mic” hoặc “Chọn camera” để đổi thiết bị.
+          </p>
         </footer>
 
         {errorMessage && (
