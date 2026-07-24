@@ -47,23 +47,38 @@ export default function CallProvider({
     useState<CallSessionRow | null>(null);
   const [caller, setCaller] =
     useState<CallerProfile | null>(null);
+  const [secondsRemaining, setSecondsRemaining] =
+    useState(90);
   const [working, setWorking] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [errorMessage, setErrorMessage] =
+    useState("");
 
+  const incomingCallRef =
+    useRef<CallSessionRow | null>(null);
   const lastNotifiedCallId = useRef("");
+
+  useEffect(() => {
+    incomingCallRef.current = incomingCall;
+  }, [incomingCall]);
 
   useEffect(() => {
     let active = true;
     let callChannel:
       | ReturnType<typeof supabase.channel>
       | null = null;
+    let cleanupTimer: number | null = null;
 
-    async function showIncomingCall(call: CallSessionRow) {
+    async function showIncomingCall(
+      call: CallSessionRow,
+    ) {
+      const expiresAt =
+        new Date(call.created_at).getTime() + 90_000;
+
       if (
         call.status !== "ringing" ||
-        new Date(call.created_at).getTime() <
-          Date.now() - 90_000
+        expiresAt <= Date.now()
       ) {
+        await supabase.rpc("cleanup_stale_calls");
         return;
       }
 
@@ -77,6 +92,13 @@ export default function CallProvider({
 
       setIncomingCall(call);
       setCaller(data ?? null);
+      setSecondsRemaining(
+        Math.max(
+          0,
+          Math.ceil((expiresAt - Date.now()) / 1000),
+        ),
+      );
+      setErrorMessage("");
 
       if (
         lastNotifiedCallId.current !== call.id &&
@@ -113,6 +135,8 @@ export default function CallProvider({
       } = await supabase.auth.getUser();
 
       if (!user || !active) return;
+
+      await supabase.rpc("cleanup_stale_calls");
 
       const { data: existingCall } = await supabase
         .from("call_sessions")
@@ -158,24 +182,32 @@ export default function CallProvider({
               if (changedCall.status === "ringing") {
                 void showIncomingCall(changedCall);
               } else if (
-                incomingCall?.id === changedCall.id
+                incomingCallRef.current?.id ===
+                changedCall.id
               ) {
                 setIncomingCall(null);
                 setCaller(null);
+                setWorking(false);
               }
             }
 
             if (
               payload.eventType === "DELETE" &&
-              incomingCall?.id ===
-                (payload.old as Partial<CallSessionRow>).id
+              incomingCallRef.current?.id ===
+                (payload.old as Partial<CallSessionRow>)
+                  .id
             ) {
               setIncomingCall(null);
               setCaller(null);
+              setWorking(false);
             }
           },
         )
         .subscribe();
+
+      cleanupTimer = window.setInterval(() => {
+        void supabase.rpc("cleanup_stale_calls");
+      }, 30_000);
     }
 
     void initialize();
@@ -183,23 +215,68 @@ export default function CallProvider({
     return () => {
       active = false;
 
+      if (cleanupTimer !== null) {
+        window.clearInterval(cleanupTimer);
+      }
+
       if (callChannel) {
         void supabase.removeChannel(callChannel);
       }
     };
-  }, [incomingCall?.id]);
+  }, []);
 
   useEffect(() => {
     if (!incomingCall) return;
 
-    void playNotificationSound();
+    const expiresAt =
+      new Date(incomingCall.created_at).getTime() +
+      90_000;
 
-    const timer = window.setInterval(() => {
+    async function heartbeat() {
+      await supabase.rpc("heartbeat_private_call", {
+        p_call_id: incomingCall?.id,
+      });
+    }
+
+    function updateCountdown() {
+      const remaining = Math.max(
+        0,
+        Math.ceil((expiresAt - Date.now()) / 1000),
+      );
+
+      setSecondsRemaining(remaining);
+
+      if (remaining === 0) {
+        void supabase
+          .rpc("cleanup_stale_calls")
+          .then(() => {
+            setIncomingCall(null);
+            setCaller(null);
+          });
+      }
+    }
+
+    void playNotificationSound();
+    void heartbeat();
+    updateCountdown();
+
+    const soundTimer = window.setInterval(() => {
       void playNotificationSound();
     }, 3000);
 
+    const heartbeatTimer = window.setInterval(() => {
+      void heartbeat();
+    }, 20_000);
+
+    const countdownTimer = window.setInterval(
+      updateCountdown,
+      1000,
+    );
+
     return () => {
-      window.clearInterval(timer);
+      window.clearInterval(soundTimer);
+      window.clearInterval(heartbeatTimer);
+      window.clearInterval(countdownTimer);
     };
   }, [incomingCall]);
 
@@ -296,6 +373,10 @@ export default function CallProvider({
                 : "Đang gọi thoại cho bạn..."}
             </p>
 
+            <p className="mt-2 text-sm text-gray-500">
+              Tự kết thúc sau {secondsRemaining} giây
+            </p>
+
             {errorMessage && (
               <p className="mt-3 rounded-md bg-red-500/15 px-3 py-2 text-sm text-red-300">
                 {errorMessage}
@@ -318,7 +399,9 @@ export default function CallProvider({
                 disabled={working}
                 className="rounded-xl bg-green-600 px-4 py-3 font-bold hover:bg-green-500 disabled:opacity-50"
               >
-                {working ? "Đang xử lý..." : "Trả lời"}
+                {working
+                  ? "Đang xử lý..."
+                  : "Trả lời"}
               </button>
             </div>
           </section>

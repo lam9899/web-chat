@@ -49,6 +49,25 @@ type CreatedCallRow = {
   status: string;
 };
 
+type CallHistoryRow = {
+  id: string;
+  caller_id: string;
+  receiver_id: string;
+  call_type: "audio" | "video";
+  status:
+    | "ringing"
+    | "accepted"
+    | "declined"
+    | "ended"
+    | "missed";
+  created_at: string;
+  answered_at: string | null;
+  ended_at: string | null;
+  updated_at: string;
+  end_reason: string | null;
+  ended_by: string | null;
+};
+
 export default function MessagesPage() {
   const [currentUserId, setCurrentUserId] = useState("");
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -86,6 +105,13 @@ export default function MessagesPage() {
   >(null);
   const [startingCallType, setStartingCallType] =
     useState<CallType | null>(null);
+  const [callHistory, setCallHistory] = useState<
+    CallHistoryRow[]
+  >([]);
+  const [showCallHistory, setShowCallHistory] =
+    useState(false);
+  const [callHistoryLoading, setCallHistoryLoading] =
+    useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [showContacts, setShowContacts] = useState(true);
 
@@ -131,6 +157,59 @@ export default function MessagesPage() {
     );
   }, [profiles, searchQuery]);
 
+  function callDurationText(callItem: CallHistoryRow) {
+    if (!callItem.answered_at || !callItem.ended_at) {
+      return "";
+    }
+
+    const totalSeconds = Math.max(
+      0,
+      Math.floor(
+        (new Date(callItem.ended_at).getTime() -
+          new Date(callItem.answered_at).getTime()) /
+          1000,
+      ),
+    );
+
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function callStatusText(callItem: CallHistoryRow) {
+    const outgoing =
+      callItem.caller_id === currentUserId;
+
+    if (callItem.status === "ringing") {
+      return outgoing ? "Đang gọi" : "Cuộc gọi đến";
+    }
+
+    if (callItem.status === "accepted") {
+      return "Đang diễn ra";
+    }
+
+    if (callItem.status === "declined") {
+      return outgoing ? "Bị từ chối" : "Đã từ chối";
+    }
+
+    if (callItem.status === "missed") {
+      return outgoing
+        ? "Không được trả lời"
+        : "Cuộc gọi nhỡ";
+    }
+
+    if (!callItem.answered_at) {
+      return outgoing ? "Đã hủy" : "Đã kết thúc";
+    }
+
+    if (callItem.end_reason === "disconnect") {
+      return "Mất kết nối";
+    }
+
+    return "Đã kết thúc";
+  }
+
   useEffect(() => {
     document.title =
       totalUnread > 0
@@ -167,6 +246,8 @@ export default function MessagesPage() {
       }
 
       setCurrentUserId(user.id);
+
+      await supabase.rpc("cleanup_stale_calls");
 
       const [
         { data: profileData, error: profileError },
@@ -483,6 +564,68 @@ export default function MessagesPage() {
             }
           },
         )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "call_sessions",
+          },
+          (payload) => {
+            if (!active) return;
+
+            if (payload.eventType === "DELETE") {
+              const deletedCall =
+                payload.old as Partial<CallHistoryRow>;
+
+              if (deletedCall.id) {
+                setCallHistory((current) =>
+                  current.filter(
+                    (item) => item.id !== deletedCall.id,
+                  ),
+                );
+              }
+
+              return;
+            }
+
+            const changedCall =
+              payload.new as CallHistoryRow;
+
+            if (
+              changedCall.caller_id !== user.id &&
+              changedCall.receiver_id !== user.id
+            ) {
+              return;
+            }
+
+            const otherParticipantId =
+              changedCall.caller_id === user.id
+                ? changedCall.receiver_id
+                : changedCall.caller_id;
+
+            if (
+              selectedProfileRef.current?.id !==
+              otherParticipantId
+            ) {
+              return;
+            }
+
+            setCallHistory((current) => {
+              const withoutCurrent = current.filter(
+                (item) => item.id !== changedCall.id,
+              );
+
+              return [changedCall, ...withoutCurrent]
+                .sort(
+                  (left, right) =>
+                    new Date(right.created_at).getTime() -
+                    new Date(left.created_at).getTime(),
+                )
+                .slice(0, 20);
+            });
+          },
+        )
         .subscribe();
 
       setLoading(false);
@@ -503,6 +646,7 @@ export default function MessagesPage() {
   useEffect(() => {
     if (!currentUserId || !selectedProfile) {
       setMessages([]);
+      setCallHistory([]);
       return;
     }
 
@@ -511,23 +655,55 @@ export default function MessagesPage() {
 
     async function loadConversation() {
       setMessagesLoading(true);
+      setCallHistoryLoading(true);
       setMessages([]);
+      setCallHistory([]);
       setEditingId(null);
       setEditingContent("");
       setErrorMessage("");
 
-      const { data, error } = await supabase
-        .from("direct_messages")
-        .select(
-          "id, sender_id, receiver_id, content, created_at, edited_at, read_at",
-        )
-        .or(
-          `and(sender_id.eq.${currentUserId},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${currentUserId})`,
-        )
-        .order("created_at", { ascending: true })
-        .limit(200);
+      const [
+        { data, error },
+        {
+          data: historyData,
+          error: historyError,
+        },
+      ] = await Promise.all([
+        supabase
+          .from("direct_messages")
+          .select(
+            "id, sender_id, receiver_id, content, created_at, edited_at, read_at",
+          )
+          .or(
+            `and(sender_id.eq.${currentUserId},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${currentUserId})`,
+          )
+          .order("created_at", { ascending: true })
+          .limit(200),
+        supabase
+          .from("call_sessions")
+          .select(
+            "id, caller_id, receiver_id, call_type, status, created_at, answered_at, ended_at, updated_at, end_reason, ended_by",
+          )
+          .or(
+            `and(caller_id.eq.${currentUserId},receiver_id.eq.${otherUserId}),and(caller_id.eq.${otherUserId},receiver_id.eq.${currentUserId})`,
+          )
+          .order("created_at", { ascending: false })
+          .limit(20),
+      ]);
 
       if (!active) return;
+
+      if (historyError) {
+        setErrorMessage(
+          `Không thể tải lịch sử cuộc gọi: ${historyError.message}`,
+        );
+      } else {
+        setCallHistory(
+          (historyData ?? []) as CallHistoryRow[],
+        );
+      }
+
+      setCallHistoryLoading(false);
 
       if (error) {
         setErrorMessage(
@@ -650,6 +826,7 @@ export default function MessagesPage() {
   function selectMember(profile: ProfileRow) {
     setSelectedProfile(profile);
     setShowContacts(false);
+    setShowCallHistory(false);
     setMessageInput("");
 
     const nextUrl = `/messages?user=${encodeURIComponent(
@@ -1133,6 +1310,21 @@ export default function MessagesPage() {
                 <button
                   type="button"
                   onClick={() =>
+                    setShowCallHistory((current) => !current)
+                  }
+                  title="Lịch sử cuộc gọi"
+                  className={`rounded px-3 py-2 text-sm font-semibold ${
+                    showCallHistory
+                      ? "bg-white/20"
+                      : "bg-white/10 hover:bg-white/15"
+                  }`}
+                >
+                  🕘
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
                     void toggleBlockSelected()
                   }
                   disabled={
@@ -1189,6 +1381,118 @@ export default function MessagesPage() {
                   </div>
                 </div>
               )}
+
+              <div className="mb-4 overflow-hidden rounded-lg border border-white/10 bg-[#2b2d31]">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowCallHistory((current) => !current)
+                  }
+                  className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-white/5"
+                >
+                  <span className="font-semibold">
+                    🕘 Lịch sử cuộc gọi
+                  </span>
+                  <span className="text-xs text-gray-400">
+                    {callHistory.length} cuộc gọi ·{" "}
+                    {showCallHistory ? "Thu gọn" : "Mở"}
+                  </span>
+                </button>
+
+                {showCallHistory && (
+                  <div className="border-t border-white/10 p-2">
+                    {callHistoryLoading ? (
+                      <p className="px-3 py-4 text-sm text-gray-400">
+                        Đang tải lịch sử cuộc gọi...
+                      </p>
+                    ) : callHistory.length === 0 ? (
+                      <p className="px-3 py-4 text-sm text-gray-400">
+                        Chưa có cuộc gọi với thành viên này.
+                      </p>
+                    ) : (
+                      <div className="space-y-1">
+                        {callHistory.map((callItem) => {
+                          const outgoing =
+                            callItem.caller_id ===
+                            currentUserId;
+                          const incomingMissed =
+                            callItem.status === "missed" &&
+                            !outgoing;
+                          const duration =
+                            callDurationText(callItem);
+
+                          return (
+                            <div
+                              key={callItem.id}
+                              className="flex items-center gap-3 rounded-md px-3 py-2 hover:bg-white/5"
+                            >
+                              <div
+                                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                                  incomingMissed
+                                    ? "bg-red-500/20 text-red-300"
+                                    : "bg-white/10"
+                                }`}
+                              >
+                                {callItem.call_type ===
+                                "video"
+                                  ? "🎥"
+                                  : "📞"}
+                              </div>
+
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className={`text-sm font-semibold ${
+                                      incomingMissed
+                                        ? "text-red-300"
+                                        : "text-white"
+                                    }`}
+                                  >
+                                    {outgoing ? "↗" : "↙"}{" "}
+                                    {callStatusText(callItem)}
+                                  </span>
+
+                                  {duration && (
+                                    <span className="text-xs text-gray-500">
+                                      {duration}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <p className="text-xs text-gray-500">
+                                  {formatTime(
+                                    callItem.created_at,
+                                  )}
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void startCall(
+                                    callItem.call_type,
+                                  )
+                                }
+                                disabled={
+                                  startingCallType !== null ||
+                                  isSelectedBlocked ||
+                                  isSuspended ||
+                                  ["ringing", "accepted"].includes(
+                                    callItem.status,
+                                  )
+                                }
+                                className="shrink-0 rounded bg-indigo-500/20 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Gọi lại
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {messagesLoading ? (
                 <p className="text-sm text-gray-400">
