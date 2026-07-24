@@ -1,0 +1,999 @@
+-- HỆ THỐNG BẠN BÈ, ID 6 SỐ VÀ PHÂN QUYỀN AD / QT / TV
+-- Chạy sau các migration hiện tại (đến 10_private_chat_preferences.sql).
+
+-- =====================================================
+-- 1. ID công khai tuần tự: #000000, #000001, ...
+-- =====================================================
+create sequence if not exists public.profile_public_id_seq
+  as bigint
+  minvalue 0
+  start with 0
+  increment by 1;
+
+alter table public.profiles
+  add column if not exists public_id bigint;
+
+do $$
+declare
+  first_available bigint;
+begin
+  select coalesce(max(public_id) + 1, 0)
+  into first_available
+  from public.profiles;
+
+  with missing_profiles as (
+    select
+      id,
+      row_number() over (
+        order by created_at asc, id asc
+      ) - 1 as offset_value
+    from public.profiles
+    where public_id is null
+  )
+  update public.profiles p
+  set public_id = first_available + m.offset_value
+  from missing_profiles m
+  where p.id = m.id;
+end
+$$;
+
+do $$
+declare
+  maximum_id bigint;
+begin
+  select max(public_id) into maximum_id
+  from public.profiles;
+
+  if maximum_id is null then
+    perform setval(
+      'public.profile_public_id_seq',
+      0,
+      false
+    );
+  else
+    perform setval(
+      'public.profile_public_id_seq',
+      maximum_id,
+      true
+    );
+  end if;
+end
+$$;
+
+alter table public.profiles
+  alter column public_id
+  set default nextval('public.profile_public_id_seq');
+
+alter sequence public.profile_public_id_seq
+  owned by public.profiles.public_id;
+
+alter table public.profiles
+  alter column public_id set not null;
+
+create unique index if not exists profiles_public_id_uidx
+on public.profiles(public_id);
+
+-- =====================================================
+-- 2. Phân quyền AD / QT / TV
+-- =====================================================
+alter table public.user_roles
+  drop constraint if exists user_roles_role_check;
+
+alter table public.user_roles
+  add constraint user_roles_role_check
+  check (role in ('member', 'moderator', 'admin'));
+
+insert into public.user_roles(user_id, role)
+select id, 'member'
+from public.profiles
+on conflict (user_id) do nothing;
+
+create or replace function public.ensure_profile_role()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  insert into public.user_roles(user_id, role)
+  values (new.id, 'member')
+  on conflict (user_id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists ensure_profile_role_trigger
+on public.profiles;
+
+create trigger ensure_profile_role_trigger
+after insert on public.profiles
+for each row
+execute function public.ensure_profile_role();
+
+-- Nếu dự án chưa có AD, tài khoản tạo đầu tiên trở thành AD.
+do $$
+begin
+  if not exists (
+    select 1 from public.user_roles where role = 'admin'
+  ) then
+    update public.user_roles
+    set role = 'admin'
+    where user_id = (
+      select id
+      from public.profiles
+      order by created_at asc, public_id asc
+      limit 1
+    );
+  end if;
+end
+$$;
+
+alter table public.user_roles enable row level security;
+grant select on public.user_roles to authenticated;
+
+drop policy if exists "Users can read own role"
+on public.user_roles;
+
+drop policy if exists "Authenticated users can read roles"
+on public.user_roles;
+
+create policy "Authenticated users can read roles"
+on public.user_roles
+for select
+to authenticated
+using (true);
+
+create or replace function public.is_admin(
+  check_user_id uuid default auth.uid()
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.user_roles
+    where user_id = check_user_id
+      and role = 'admin'
+  );
+$$;
+
+create or replace function public.is_moderator(
+  check_user_id uuid default auth.uid()
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.user_roles
+    where user_id = check_user_id
+      and role = 'moderator'
+  );
+$$;
+
+create or replace function public.is_staff(
+  check_user_id uuid default auth.uid()
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.user_roles
+    where user_id = check_user_id
+      and role in ('admin', 'moderator')
+  );
+$$;
+
+revoke all on function public.is_admin(uuid) from public;
+revoke all on function public.is_moderator(uuid) from public;
+revoke all on function public.is_staff(uuid) from public;
+grant execute on function public.is_admin(uuid) to authenticated;
+grant execute on function public.is_moderator(uuid) to authenticated;
+grant execute on function public.is_staff(uuid) to authenticated;
+
+-- =====================================================
+-- 3. Bảng lời mời và quan hệ bạn bè
+-- =====================================================
+create table if not exists public.friend_requests (
+  id bigint generated by default as identity primary key,
+  sender_id uuid not null
+    references public.profiles(id) on delete cascade,
+  receiver_id uuid not null
+    references public.profiles(id) on delete cascade,
+  status text not null default 'pending'
+    check (status in ('pending', 'accepted', 'declined', 'cancelled')),
+  created_at timestamptz not null default now(),
+  responded_at timestamptz,
+  constraint friend_requests_not_self
+    check (sender_id <> receiver_id)
+);
+
+create unique index if not exists friend_requests_pending_pair_uidx
+on public.friend_requests(
+  least(sender_id, receiver_id),
+  greatest(sender_id, receiver_id)
+)
+where status = 'pending';
+
+create index if not exists friend_requests_receiver_idx
+on public.friend_requests(receiver_id, status, created_at desc);
+
+create index if not exists friend_requests_sender_idx
+on public.friend_requests(sender_id, status, created_at desc);
+
+create table if not exists public.friendships (
+  user_id uuid not null
+    references public.profiles(id) on delete cascade,
+  friend_id uuid not null
+    references public.profiles(id) on delete cascade,
+  created_by uuid
+    references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  primary key(user_id, friend_id),
+  constraint friendships_not_self
+    check (user_id <> friend_id)
+);
+
+create index if not exists friendships_friend_idx
+on public.friendships(friend_id, user_id);
+
+alter table public.friend_requests enable row level security;
+alter table public.friendships enable row level security;
+
+grant select on public.friend_requests to authenticated;
+grant select on public.friendships to authenticated;
+
+drop policy if exists "Participants can read friend requests"
+on public.friend_requests;
+create policy "Participants can read friend requests"
+on public.friend_requests
+for select
+to authenticated
+using (
+  auth.uid() = sender_id
+  or auth.uid() = receiver_id
+);
+
+drop policy if exists "Users can read own friendships"
+on public.friendships;
+create policy "Users can read own friendships"
+on public.friendships
+for select
+to authenticated
+using (auth.uid() = user_id);
+
+create or replace function public.are_friends(
+  first_user_id uuid,
+  second_user_id uuid
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.friendships f
+    where f.user_id = first_user_id
+      and f.friend_id = second_user_id
+  );
+$$;
+
+revoke all on function public.are_friends(uuid, uuid) from public;
+grant execute on function public.are_friends(uuid, uuid) to authenticated;
+
+create or replace function public.send_friend_request(
+  p_receiver_id uuid
+)
+returns public.friend_requests
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  created_request public.friend_requests;
+begin
+  if current_user_id is null then
+    raise exception 'Bạn chưa đăng nhập.' using errcode = '42501';
+  end if;
+  if p_receiver_id is null or p_receiver_id = current_user_id then
+    raise exception 'Tài khoản nhận không hợp lệ.' using errcode = '22023';
+  end if;
+  if not exists (select 1 from public.profiles where id = p_receiver_id) then
+    raise exception 'Không tìm thấy thành viên.' using errcode = 'P0002';
+  end if;
+  if public.are_friends(current_user_id, p_receiver_id) then
+    raise exception 'Hai tài khoản đã là bạn bè.' using errcode = 'P0001';
+  end if;
+  if exists (
+    select 1 from public.user_blocks b
+    where (b.blocker_id = current_user_id and b.blocked_id = p_receiver_id)
+       or (b.blocker_id = p_receiver_id and b.blocked_id = current_user_id)
+  ) then
+    raise exception 'Không thể kết bạn vì một tài khoản đã chặn tài khoản còn lại.' using errcode = '42501';
+  end if;
+  if exists (
+    select 1 from public.friend_requests r
+    where r.status = 'pending'
+      and r.sender_id = p_receiver_id
+      and r.receiver_id = current_user_id
+  ) then
+    raise exception 'Thành viên này đã gửi lời mời cho bạn. Hãy chấp nhận lời mời.' using errcode = 'P0001';
+  end if;
+
+  insert into public.friend_requests(sender_id, receiver_id)
+  values(current_user_id, p_receiver_id)
+  returning * into created_request;
+  return created_request;
+exception
+  when unique_violation then
+    raise exception 'Lời mời kết bạn đang chờ xử lý.' using errcode = 'P0001';
+end;
+$$;
+
+create or replace function public.respond_friend_request(
+  p_request_id bigint,
+  p_response text
+)
+returns public.friend_requests
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  target_request public.friend_requests;
+begin
+  if current_user_id is null then
+    raise exception 'Bạn chưa đăng nhập.' using errcode = '42501';
+  end if;
+  if p_response not in ('accepted', 'declined') then
+    raise exception 'Phản hồi không hợp lệ.' using errcode = '22023';
+  end if;
+
+  select * into target_request
+  from public.friend_requests
+  where id = p_request_id
+  for update;
+
+  if not found then
+    raise exception 'Không tìm thấy lời mời.' using errcode = 'P0002';
+  end if;
+  if target_request.receiver_id <> current_user_id then
+    raise exception 'Bạn không thể xử lý lời mời này.' using errcode = '42501';
+  end if;
+  if target_request.status <> 'pending' then
+    return target_request;
+  end if;
+
+  update public.friend_requests
+  set status = p_response,
+      responded_at = now()
+  where id = p_request_id
+  returning * into target_request;
+
+  if p_response = 'accepted' then
+    insert into public.friendships(user_id, friend_id, created_by)
+    values
+      (target_request.sender_id, target_request.receiver_id, current_user_id),
+      (target_request.receiver_id, target_request.sender_id, current_user_id)
+    on conflict (user_id, friend_id) do nothing;
+  end if;
+
+  return target_request;
+end;
+$$;
+
+create or replace function public.cancel_friend_request(
+  p_request_id bigint
+)
+returns public.friend_requests
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  target_request public.friend_requests;
+begin
+  select * into target_request
+  from public.friend_requests
+  where id = p_request_id
+  for update;
+
+  if not found then
+    raise exception 'Không tìm thấy lời mời.' using errcode = 'P0002';
+  end if;
+  if target_request.sender_id <> current_user_id then
+    raise exception 'Bạn không thể hủy lời mời này.' using errcode = '42501';
+  end if;
+  if target_request.status = 'pending' then
+    update public.friend_requests
+    set status = 'cancelled', responded_at = now()
+    where id = p_request_id
+    returning * into target_request;
+  end if;
+  return target_request;
+end;
+$$;
+
+create or replace function public.remove_friend(
+  p_friend_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  current_user_id uuid := auth.uid();
+begin
+  if current_user_id is null then
+    raise exception 'Bạn chưa đăng nhập.' using errcode = '42501';
+  end if;
+  delete from public.friendships
+  where (user_id = current_user_id and friend_id = p_friend_id)
+     or (user_id = p_friend_id and friend_id = current_user_id);
+  return true;
+end;
+$$;
+
+revoke all on function public.send_friend_request(uuid) from public;
+revoke all on function public.respond_friend_request(bigint, text) from public;
+revoke all on function public.cancel_friend_request(bigint) from public;
+revoke all on function public.remove_friend(uuid) from public;
+grant execute on function public.send_friend_request(uuid) to authenticated;
+grant execute on function public.respond_friend_request(bigint, text) to authenticated;
+grant execute on function public.cancel_friend_request(bigint) to authenticated;
+grant execute on function public.remove_friend(uuid) to authenticated;
+
+create or replace function public.get_my_friends()
+returns table(
+  id uuid,
+  username text,
+  avatar_url text,
+  public_id bigint,
+  role text,
+  created_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    p.id,
+    p.username,
+    p.avatar_url,
+    p.public_id,
+    coalesce(r.role, 'member') as role,
+    f.created_at
+  from public.friendships f
+  join public.profiles p on p.id = f.friend_id
+  left join public.user_roles r on r.user_id = p.id
+  where f.user_id = auth.uid()
+  order by p.username asc;
+$$;
+
+create or replace function public.get_friend_requests()
+returns table(
+  request_id bigint,
+  direction text,
+  id uuid,
+  username text,
+  avatar_url text,
+  public_id bigint,
+  role text,
+  created_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    fr.id as request_id,
+    case when fr.receiver_id = auth.uid()
+      then 'incoming' else 'outgoing' end as direction,
+    p.id,
+    p.username,
+    p.avatar_url,
+    p.public_id,
+    coalesce(ur.role, 'member') as role,
+    fr.created_at
+  from public.friend_requests fr
+  join public.profiles p
+    on p.id = case
+      when fr.receiver_id = auth.uid() then fr.sender_id
+      else fr.receiver_id
+    end
+  left join public.user_roles ur on ur.user_id = p.id
+  where fr.status = 'pending'
+    and (fr.sender_id = auth.uid() or fr.receiver_id = auth.uid())
+  order by fr.created_at desc;
+$$;
+
+create or replace function public.search_people_for_friendship(
+  p_query text
+)
+returns table(
+  id uuid,
+  username text,
+  avatar_url text,
+  public_id bigint,
+  role text,
+  relationship_state text,
+  request_id bigint
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  normalized text := lower(btrim(coalesce(p_query, '')));
+  numeric_part text;
+begin
+  if auth.uid() is null then
+    raise exception 'Bạn chưa đăng nhập.' using errcode = '42501';
+  end if;
+  if normalized = '' then
+    return;
+  end if;
+
+  numeric_part := regexp_replace(normalized, '^#', '');
+
+  return query
+  select
+    p.id,
+    p.username,
+    p.avatar_url,
+    p.public_id,
+    coalesce(ur.role, 'member') as role,
+    case
+      when p.id = auth.uid() then 'self'
+      when public.are_friends(auth.uid(), p.id) then 'friends'
+      when incoming.id is not null then 'incoming'
+      when outgoing.id is not null then 'outgoing'
+      else 'none'
+    end as relationship_state,
+    coalesce(incoming.id, outgoing.id) as request_id
+  from public.profiles p
+  join auth.users au on au.id = p.id
+  left join public.user_roles ur on ur.user_id = p.id
+  left join public.friend_requests incoming
+    on incoming.sender_id = p.id
+   and incoming.receiver_id = auth.uid()
+   and incoming.status = 'pending'
+  left join public.friend_requests outgoing
+    on outgoing.sender_id = auth.uid()
+   and outgoing.receiver_id = p.id
+   and outgoing.status = 'pending'
+  where
+    (
+      numeric_part ~ '^[0-9]{1,6}$'
+      and p.public_id = numeric_part::bigint
+    )
+    or (
+      position('@' in normalized) > 0
+      and lower(au.email) = normalized
+    )
+    or (
+      position('@' in normalized) = 0
+      and numeric_part !~ '^[0-9]{1,6}$'
+      and lower(p.username) like '%' || normalized || '%'
+    )
+  order by
+    case when p.id = auth.uid() then 1 else 0 end,
+    p.username asc
+  limit 20;
+end;
+$$;
+
+revoke all on function public.get_my_friends() from public;
+revoke all on function public.get_friend_requests() from public;
+revoke all on function public.search_people_for_friendship(text) from public;
+grant execute on function public.get_my_friends() to authenticated;
+grant execute on function public.get_friend_requests() to authenticated;
+grant execute on function public.search_people_for_friendship(text) to authenticated;
+
+-- =====================================================
+-- 4. Chỉ bạn bè mới đọc/gửi tin nhắn riêng và gọi điện
+-- =====================================================
+drop policy if exists "Participants can read direct messages"
+on public.direct_messages;
+create policy "Participants can read direct messages"
+on public.direct_messages
+for select
+to authenticated
+using (
+  (auth.uid() = sender_id or auth.uid() = receiver_id)
+  and public.are_friends(sender_id, receiver_id)
+);
+
+drop policy if exists "Users can send direct messages"
+on public.direct_messages;
+create policy "Users can send direct messages"
+on public.direct_messages
+for insert
+to authenticated
+with check (
+  auth.uid() = sender_id
+  and public.are_friends(sender_id, receiver_id)
+  and not public.is_user_suspended()
+  and not exists (
+    select 1 from public.user_blocks b
+    where (b.blocker_id = sender_id and b.blocked_id = receiver_id)
+       or (b.blocker_id = receiver_id and b.blocked_id = sender_id)
+  )
+);
+
+drop policy if exists "Senders can edit direct messages"
+on public.direct_messages;
+create policy "Senders can edit direct messages"
+on public.direct_messages
+for update
+to authenticated
+using (
+  auth.uid() = sender_id
+  and public.are_friends(sender_id, receiver_id)
+  and not public.is_user_suspended()
+)
+with check (
+  auth.uid() = sender_id
+  and public.are_friends(sender_id, receiver_id)
+  and not public.is_user_suspended()
+);
+
+drop policy if exists "Senders can delete direct messages"
+on public.direct_messages;
+create policy "Senders can delete direct messages"
+on public.direct_messages
+for delete
+to authenticated
+using (
+  auth.uid() = sender_id
+  and public.are_friends(sender_id, receiver_id)
+);
+
+create or replace function public.create_private_call(
+  p_receiver_id uuid,
+  p_call_type text
+)
+returns public.call_sessions
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  new_call public.call_sessions;
+begin
+  if current_user_id is null then
+    raise exception 'Bạn chưa đăng nhập.' using errcode = '42501';
+  end if;
+  if p_receiver_id is null or p_receiver_id = current_user_id then
+    raise exception 'Người nhận cuộc gọi không hợp lệ.' using errcode = '22023';
+  end if;
+  if p_call_type not in ('audio', 'video') then
+    raise exception 'Loại cuộc gọi không hợp lệ.' using errcode = '22023';
+  end if;
+  if not public.are_friends(current_user_id, p_receiver_id) then
+    raise exception 'Chỉ bạn bè mới có thể gọi cho nhau.' using errcode = '42501';
+  end if;
+  if public.is_user_suspended(current_user_id)
+     or public.is_user_suspended(p_receiver_id) then
+    raise exception 'Một trong hai tài khoản đang bị khóa chat.' using errcode = '42501';
+  end if;
+  if exists (
+    select 1 from public.user_blocks b
+    where (b.blocker_id = current_user_id and b.blocked_id = p_receiver_id)
+       or (b.blocker_id = p_receiver_id and b.blocked_id = current_user_id)
+  ) then
+    raise exception 'Không thể gọi vì một tài khoản đã chặn tài khoản còn lại.' using errcode = '42501';
+  end if;
+
+  perform public.cleanup_stale_calls();
+
+  if exists (
+    select 1 from public.call_sessions c
+    where c.status in ('ringing', 'accepted')
+      and (
+        c.caller_id in (current_user_id, p_receiver_id)
+        or c.receiver_id in (current_user_id, p_receiver_id)
+      )
+  ) then
+    raise exception 'Một trong hai thành viên đang có cuộc gọi khác.' using errcode = 'P0001';
+  end if;
+
+  insert into public.call_sessions(
+    caller_id,
+    receiver_id,
+    call_type,
+    room_name,
+    caller_last_seen_at,
+    end_reason,
+    ended_by
+  ) values (
+    current_user_id,
+    p_receiver_id,
+    p_call_type,
+    'call-' || replace(gen_random_uuid()::text, '-', ''),
+    now(),
+    null,
+    null
+  )
+  returning * into new_call;
+  return new_call;
+end;
+$$;
+
+grant execute on function public.create_private_call(uuid, text)
+to authenticated;
+
+-- Chặn cũng đồng thời hủy kết bạn và lời mời đang chờ.
+create or replace function public.cleanup_relationship_after_block()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.friendships
+  where (user_id = new.blocker_id and friend_id = new.blocked_id)
+     or (user_id = new.blocked_id and friend_id = new.blocker_id);
+
+  update public.friend_requests
+  set status = 'cancelled', responded_at = now()
+  where status = 'pending'
+    and (
+      (sender_id = new.blocker_id and receiver_id = new.blocked_id)
+      or (sender_id = new.blocked_id and receiver_id = new.blocker_id)
+    );
+  return new;
+end;
+$$;
+
+drop trigger if exists cleanup_relationship_after_block_trigger
+on public.user_blocks;
+create trigger cleanup_relationship_after_block_trigger
+after insert on public.user_blocks
+for each row
+execute function public.cleanup_relationship_after_block();
+
+-- =====================================================
+-- 5. Quyền kiểm duyệt và phân quyền
+-- =====================================================
+drop policy if exists "Admins can delete any message"
+on public.messages;
+drop policy if exists "Staff can delete any message"
+on public.messages;
+create policy "Staff can delete any message"
+on public.messages
+for delete
+to authenticated
+using (public.is_staff());
+
+drop policy if exists "Admins can read all suspensions"
+on public.user_suspensions;
+drop policy if exists "Admins can create suspensions"
+on public.user_suspensions;
+drop policy if exists "Admins can update suspensions"
+on public.user_suspensions;
+drop policy if exists "Admins can delete suspensions"
+on public.user_suspensions;
+drop policy if exists "Staff can read all suspensions"
+on public.user_suspensions;
+drop policy if exists "Staff can create suspensions"
+on public.user_suspensions;
+drop policy if exists "Staff can update suspensions"
+on public.user_suspensions;
+drop policy if exists "Staff can delete suspensions"
+on public.user_suspensions;
+
+create policy "Staff can read all suspensions"
+on public.user_suspensions
+for select
+to authenticated
+using (public.is_staff());
+
+create policy "Staff can create suspensions"
+on public.user_suspensions
+for insert
+to authenticated
+with check (
+  public.is_staff()
+  and created_by = auth.uid()
+);
+
+create policy "Staff can update suspensions"
+on public.user_suspensions
+for update
+to authenticated
+using (public.is_staff())
+with check (
+  public.is_staff()
+  and created_by = auth.uid()
+);
+
+create policy "Staff can delete suspensions"
+on public.user_suspensions
+for delete
+to authenticated
+using (public.is_staff());
+
+create or replace function public.enforce_staff_suspension_target()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  actor_role text;
+  target_role text;
+begin
+  select role into actor_role
+  from public.user_roles
+  where user_id = auth.uid();
+
+  select coalesce(role, 'member') into target_role
+  from public.user_roles
+  where user_id = case
+    when tg_op = 'DELETE' then old.user_id
+    else new.user_id
+  end;
+
+  if actor_role = 'moderator' and target_role <> 'member' then
+    raise exception 'QT chỉ có thể khóa hoặc mở khóa thành viên TV.' using errcode = '42501';
+  end if;
+
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists enforce_staff_suspension_target_trigger
+on public.user_suspensions;
+create trigger enforce_staff_suspension_target_trigger
+before insert or update or delete on public.user_suspensions
+for each row
+execute function public.enforce_staff_suspension_target();
+
+create or replace function public.staff_list_members()
+returns table(
+  id uuid,
+  username text,
+  avatar_url text,
+  public_id bigint,
+  email text,
+  role text,
+  created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.is_staff() then
+    raise exception 'Bạn không có quyền quản trị.' using errcode = '42501';
+  end if;
+
+  return query
+  select
+    p.id,
+    p.username,
+    p.avatar_url,
+    p.public_id,
+    coalesce(au.email, ''),
+    coalesce(ur.role, 'member'),
+    p.created_at
+  from public.profiles p
+  join auth.users au on au.id = p.id
+  left join public.user_roles ur on ur.user_id = p.id
+  order by p.public_id asc;
+end;
+$$;
+
+create or replace function public.admin_set_user_role(
+  p_user_id uuid,
+  p_role text
+)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  admin_count integer;
+begin
+  if not public.is_admin(current_user_id) then
+    raise exception 'Chỉ AD được thay đổi phân quyền.' using errcode = '42501';
+  end if;
+  if p_role not in ('member', 'moderator', 'admin') then
+    raise exception 'Vai trò không hợp lệ.' using errcode = '22023';
+  end if;
+  if not exists (select 1 from public.profiles where id = p_user_id) then
+    raise exception 'Không tìm thấy thành viên.' using errcode = 'P0002';
+  end if;
+
+  if p_user_id = current_user_id and p_role <> 'admin' then
+    select count(*) into admin_count
+    from public.user_roles
+    where role = 'admin';
+    if admin_count <= 1 then
+      raise exception 'Không thể hạ quyền AD cuối cùng.' using errcode = 'P0001';
+    end if;
+  end if;
+
+  insert into public.user_roles(user_id, role)
+  values(p_user_id, p_role)
+  on conflict(user_id)
+  do update set role = excluded.role;
+  return p_role;
+end;
+$$;
+
+revoke all on function public.staff_list_members() from public;
+revoke all on function public.admin_set_user_role(uuid, text) from public;
+grant execute on function public.staff_list_members() to authenticated;
+grant execute on function public.admin_set_user_role(uuid, text) to authenticated;
+
+-- =====================================================
+-- 6. Realtime
+-- =====================================================
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'friend_requests'
+  ) then
+    alter publication supabase_realtime add table public.friend_requests;
+  end if;
+
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'friendships'
+  ) then
+    alter publication supabase_realtime add table public.friendships;
+  end if;
+
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'user_roles'
+  ) then
+    alter publication supabase_realtime add table public.user_roles;
+  end if;
+end
+$$;
+
+-- Kiểm tra ID và vai trò sau migration.
+select
+  p.username,
+  '#' || lpad(p.public_id::text, 6, '0') as public_id,
+  coalesce(r.role, 'member') as role
+from public.profiles p
+left join public.user_roles r on r.user_id = p.id
+order by p.public_id asc;

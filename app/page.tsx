@@ -10,6 +10,10 @@ import {
 } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { notifyPrivateMessage } from "@/utils/notifications";
+import MemberBadge, {
+  formatPublicId,
+  type MemberRole,
+} from "@/components/member-badge";
 
 const supabase = createClient();
 
@@ -34,10 +38,20 @@ type ReactionRow = {
   created_at: string;
 };
 
+type MemberCard = {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+  public_id: number;
+  role: MemberRole;
+};
+
 type OnlineUser = {
   user_id: string;
   username: string;
   avatar_url?: string;
+  public_id: number;
+  role: MemberRole;
   online_at: string;
 };
 
@@ -123,6 +137,15 @@ export default function Home() {
   const [username, setUsername] = useState("Bạn");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [userId, setUserId] = useState("");
+  const [publicId, setPublicId] = useState<number | null>(null);
+  const [memberRole, setMemberRole] =
+    useState<MemberRole>("member");
+  const [memberCards, setMemberCards] = useState<
+    Record<string, MemberCard>
+  >({});
+  const [friendIds, setFriendIds] = useState<Set<string>>(
+    new Set(),
+  );
 
   const [replyingTo, setReplyingTo] = useState<MessageRow | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<number | null>(
@@ -151,6 +174,8 @@ export default function Home() {
 
   const presenceChannelRef =
     useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const memberCardsRef = useRef<Record<string, MemberCard>>({});
+  const friendIdsRef = useRef<Set<string>>(new Set());
   const roomChannelRef =
     useRef<ReturnType<typeof supabase.channel> | null>(null);
   const typingStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -219,6 +244,56 @@ export default function Home() {
   }, [reactions, userId]);
 
   useEffect(() => {
+    memberCardsRef.current = memberCards;
+  }, [memberCards]);
+
+  useEffect(() => {
+    friendIdsRef.current = friendIds;
+  }, [friendIds]);
+
+  async function loadMemberCards(ids: string[]) {
+    const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+    if (uniqueIds.length === 0) return;
+
+    const [{ data: profiles }, { data: roles }] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id, username, avatar_url, public_id")
+        .in("id", uniqueIds),
+      supabase
+        .from("user_roles")
+        .select("user_id, role")
+        .in("user_id", uniqueIds),
+    ]);
+
+    const roleMap = new Map(
+      (roles ?? []).map((row) => [
+        row.user_id,
+        row.role as MemberRole,
+      ]),
+    );
+
+    const cards = (profiles ?? []).reduce<
+      Record<string, MemberCard>
+    >((current, profile) => {
+      current[profile.id] = {
+        id: profile.id,
+        username: profile.username,
+        avatar_url: profile.avatar_url,
+        public_id: profile.public_id,
+        role: roleMap.get(profile.id) ?? "member",
+      };
+      return current;
+    }, {});
+
+    setMemberCards((current) => {
+      const next = { ...current, ...cards };
+      memberCardsRef.current = next;
+      return next;
+    });
+  }
+
+  useEffect(() => {
     document.title =
       privateUnreadCount > 0
         ? `(${privateUnreadCount}) Talk Cùng Lâm DZ`
@@ -250,19 +325,72 @@ export default function Home() {
         return;
       }
 
-      const displayName =
-        user.user_metadata?.username ||
-        user.email?.split("@")[0] ||
-        "Bạn";
-      const currentAvatar = user.user_metadata?.avatar_url || "";
+      const authenticatedUserId = user.id;
+
+      const [profileResponse, roleResponse, friendsResponse] =
+        await Promise.all([
+          supabase
+            .from("profiles")
+            .select("id, username, avatar_url, public_id")
+            .eq("id", authenticatedUserId)
+            .maybeSingle(),
+          supabase
+            .from("user_roles")
+            .select("role")
+            .eq("user_id", authenticatedUserId)
+            .maybeSingle(),
+          supabase.rpc("get_my_friends"),
+        ]);
 
       if (!isActive) return;
 
-      const authenticatedUserId = user.id;
+      const displayName =
+        profileResponse.data?.username ||
+        user.user_metadata?.username ||
+        user.email?.split("@")[0] ||
+        "Bạn";
+      const currentAvatar =
+        profileResponse.data?.avatar_url ||
+        user.user_metadata?.avatar_url ||
+        "";
+      const currentPublicId =
+        profileResponse.data?.public_id ?? 0;
+      const currentRole =
+        (roleResponse.data?.role as MemberRole | undefined) ??
+        "member";
+      const friends = (friendsResponse.data ?? []) as Array<{
+        id: string;
+        username: string;
+        avatar_url: string | null;
+        public_id: number;
+        role: MemberRole;
+      }>;
+      const friendIdSet = new Set(
+        friends.map((friend) => friend.id),
+      );
+      const initialCards: Record<string, MemberCard> = {
+        [authenticatedUserId]: {
+          id: authenticatedUserId,
+          username: displayName,
+          avatar_url: currentAvatar || null,
+          public_id: currentPublicId,
+          role: currentRole,
+        },
+      };
 
+      friends.forEach((friend) => {
+        initialCards[friend.id] = friend;
+      });
+
+      memberCardsRef.current = initialCards;
+      friendIdsRef.current = friendIdSet;
+      setMemberCards(initialCards);
+      setFriendIds(friendIdSet);
       setUserId(authenticatedUserId);
       setUsername(displayName);
       setAvatarUrl(currentAvatar);
+      setPublicId(currentPublicId);
+      setMemberRole(currentRole);
 
       async function refreshPrivateUnreadCount() {
         const { count, error: countError } = await supabase
@@ -362,19 +490,83 @@ export default function Home() {
           void notifyPrivateMessage({
             messageId: newMessage.id,
             senderId: newMessage.sender_id,
-            senderName: "một thành viên",
+            senderName:
+              memberCardsRef.current[newMessage.sender_id]
+                ?.username ?? "một người bạn",
             content: newMessage.content,
           });
+        },
+      );
+
+      onlineChannel.on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "friendships",
+          filter: `user_id=eq.${authenticatedUserId}`,
+        },
+        async () => {
+          const { data } = await supabase.rpc("get_my_friends");
+          if (!isActive) return;
+
+          const nextFriends = (data ?? []) as Array<{
+            id: string;
+            username: string;
+            avatar_url: string | null;
+            public_id: number;
+            role: MemberRole;
+          }>;
+          const nextIds = new Set(
+            nextFriends.map((friend) => friend.id),
+          );
+          const ownCard =
+            memberCardsRef.current[authenticatedUserId];
+          const nextCards: Record<string, MemberCard> = {};
+          if (ownCard) nextCards[authenticatedUserId] = ownCard;
+          nextFriends.forEach((friend) => {
+            nextCards[friend.id] = friend;
+          });
+          friendIdsRef.current = nextIds;
+          memberCardsRef.current = nextCards;
+          setFriendIds(nextIds);
+          setMemberCards(nextCards);
+          setOnlineUsers((current) =>
+            current.filter(
+              (member) =>
+                member.user_id === authenticatedUserId ||
+                nextIds.has(member.user_id),
+            ),
+          );
         },
       );
 
       onlineChannel.on("presence", { event: "sync" }, () => {
         const presenceState = onlineChannel.presenceState();
 
+        const allowedIds = new Set([
+          authenticatedUserId,
+          ...friendIdsRef.current,
+        ]);
+
         const users = Object.values(presenceState)
           .flat()
           .map((presence) => presence as unknown as OnlineUser)
-          .filter((member) => member.user_id && member.username);
+          .filter(
+            (member) =>
+              member.user_id && allowedIds.has(member.user_id),
+          )
+          .map((member) => {
+            const card = memberCardsRef.current[member.user_id];
+            return {
+              ...member,
+              username: card?.username ?? member.username,
+              avatar_url:
+                card?.avatar_url ?? member.avatar_url,
+              public_id: card?.public_id ?? member.public_id ?? 0,
+              role: card?.role ?? member.role ?? "member",
+            } as OnlineUser;
+          });
 
         const uniqueUsers = Array.from(
           new Map(
@@ -400,6 +592,8 @@ export default function Home() {
             user_id: user.id,
             username: displayName,
             avatar_url: currentAvatar,
+            public_id: currentPublicId,
+            role: currentRole,
             online_at: new Date().toISOString(),
           });
         }
@@ -525,6 +719,9 @@ export default function Home() {
       } else {
         const loadedMessages = messageData ?? [];
         setMessages(loadedMessages);
+        void loadMemberCards(
+          loadedMessages.map((message) => message.user_id),
+        );
 
         const messageIds = loadedMessages.map((message) => message.id);
 
@@ -569,6 +766,7 @@ export default function Home() {
 
             if (payload.eventType === "INSERT") {
               const newMessage = payload.new as MessageRow;
+              void loadMemberCards([newMessage.user_id]);
 
               if (newMessage.channel === selectedChannel) {
                 setMessages((currentMessages) => {
@@ -1246,11 +1444,14 @@ export default function Home() {
             }}
             className="min-w-0 flex-1 text-left"
           >
-            <div className="truncate text-sm font-semibold">
-              {username}
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="truncate text-sm font-semibold">
+                {username}
+              </div>
+              <MemberBadge role={memberRole} />
             </div>
-            <div className="text-xs text-gray-400">
-              Cài đặt tài khoản
+            <div className="truncate text-xs text-gray-400">
+              {formatPublicId(publicId)} · Cài đặt tài khoản
             </div>
           </button>
 
@@ -1364,13 +1565,30 @@ export default function Home() {
                     key={message.id}
                     className="group relative flex gap-3 rounded px-2 py-3 hover:bg-black/10 md:gap-4"
                   >
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-500 font-bold">
-                      {message.username.charAt(0).toUpperCase()}
-                    </div>
+                    {memberCards[message.user_id]?.avatar_url ? (
+                      <img
+                        src={memberCards[message.user_id].avatar_url ?? ""}
+                        alt={memberCards[message.user_id].username}
+                        className="h-10 w-10 shrink-0 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-500 font-bold">
+                        {(memberCards[message.user_id]?.username ??
+                          message.username)
+                          .charAt(0)
+                          .toUpperCase()}
+                      </div>
+                    )}
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-baseline gap-x-2">
-                        <strong>{message.username}</strong>
+                      <div className="flex flex-wrap items-center gap-x-2">
+                        <strong>
+                          {memberCards[message.user_id]?.username ??
+                            message.username}
+                        </strong>
+                        <MemberBadge
+                          role={memberCards[message.user_id]?.role}
+                        />
 
                         <span className="text-xs text-gray-400">
                           {formatTime(message.created_at)}
@@ -1380,6 +1598,12 @@ export default function Home() {
                           <span className="text-xs text-gray-500">
                             (đã sửa)
                           </span>
+                        )}
+                      </div>
+
+                      <div className="mt-0.5 text-[11px] text-gray-500">
+                        {formatPublicId(
+                          memberCards[message.user_id]?.public_id,
                         )}
                       </div>
 
@@ -1698,8 +1922,16 @@ export default function Home() {
               <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] bg-green-500" />
             </div>
 
-            <span className="min-w-0 flex-1 truncate font-medium">
-              {member.username}
+            <span className="min-w-0 flex-1">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-medium">
+                  {member.username}
+                </span>
+                <MemberBadge role={member.role} />
+              </span>
+              <span className="mt-0.5 block text-xs text-gray-500">
+                {formatPublicId(member.public_id)}
+              </span>
             </span>
 
             <span className="text-xs text-gray-500">

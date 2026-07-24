@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
+import MemberBadge, {
+  formatPublicId,
+  type MemberRole,
+} from "@/components/member-badge";
 
 const supabase = createClient();
 
@@ -40,8 +44,10 @@ type ProfileRow = {
   id: string;
   username: string;
   avatar_url: string | null;
+  public_id: number;
+  email: string;
+  role: MemberRole;
   created_at: string;
-  updated_at: string;
 };
 
 
@@ -65,6 +71,8 @@ function isSuspensionActive(suspension: SuspensionRow) {
 
 export default function AdminPage() {
   const [adminUserId, setAdminUserId] = useState("");
+  const [currentRole, setCurrentRole] =
+    useState<MemberRole>("member");
   const [messages, setMessages] = useState<AdminMessage[]>([]);
   const [channels, setChannels] = useState<ChannelRow[]>([]);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -111,13 +119,21 @@ export default function AdminPage() {
 
       if (!active) return;
 
-      if (roleError || roleData?.role !== "admin") {
+      const resolvedRole =
+        roleData?.role as MemberRole | undefined;
+
+      if (
+        roleError ||
+        !resolvedRole ||
+        !["admin", "moderator"].includes(resolvedRole)
+      ) {
         setAccessDenied(true);
         setLoading(false);
         return;
       }
 
       setAdminUserId(user.id);
+      setCurrentRole(resolvedRole);
 
       const [
         { data: messageData, error: messageError },
@@ -143,12 +159,7 @@ export default function AdminPage() {
             "slug, name, description, position, is_default, created_by, created_at",
           )
           .order("position", { ascending: true }),
-        supabase
-          .from("profiles")
-          .select(
-            "id, username, avatar_url, created_at, updated_at",
-          )
-          .order("username", { ascending: true }),
+        supabase.rpc("staff_list_members"),
       ]);
 
       if (!active) return;
@@ -182,7 +193,7 @@ export default function AdminPage() {
           `Không thể tải danh sách thành viên: ${profileError.message}`,
         );
       } else {
-        setProfiles(profileData ?? []);
+        setProfiles((profileData ?? []) as ProfileRow[]);
       }
 
       realtimeChannel = supabase
@@ -330,12 +341,9 @@ export default function AdminPage() {
           async () => {
             if (!active) return;
 
-            const { data, error } = await supabase
-              .from("profiles")
-              .select(
-                "id, username, avatar_url, created_at, updated_at",
-              )
-              .order("username", { ascending: true });
+            const { data, error } = await supabase.rpc(
+              "staff_list_members",
+            );
 
             if (!active) return;
 
@@ -344,7 +352,23 @@ export default function AdminPage() {
                 `Không thể cập nhật thành viên: ${error.message}`,
               );
             } else {
-              setProfiles(data ?? []);
+              setProfiles((data ?? []) as ProfileRow[]);
+            }
+          },
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "user_roles",
+          },
+          async () => {
+            const { data } = await supabase.rpc(
+              "staff_list_members",
+            );
+            if (active && data) {
+              setProfiles(data as ProfileRow[]);
             }
           },
         )
@@ -382,10 +406,13 @@ export default function AdminPage() {
 
     if (!query) return profiles;
 
-    return profiles.filter((profile) =>
-      profile.username
-        .toLocaleLowerCase("vi")
-        .includes(query),
+    return profiles.filter(
+      (profile) =>
+        profile.username
+          .toLocaleLowerCase("vi")
+          .includes(query) ||
+        profile.email.toLocaleLowerCase("vi").includes(query) ||
+        formatPublicId(profile.public_id).includes(query),
     );
   }, [memberSearch, profiles]);
 
@@ -703,8 +730,16 @@ export default function AdminPage() {
       <div className="mx-auto w-full max-w-6xl">
         <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="mb-2 inline-flex rounded-full bg-red-500/15 px-3 py-1 text-xs font-bold uppercase text-red-300">
-              Quản trị viên
+            <div
+              className={`mb-2 inline-flex rounded-full px-3 py-1 text-xs font-bold uppercase ${
+                currentRole === "admin"
+                  ? "bg-red-500/15 text-red-300"
+                  : "bg-green-500/15 text-green-300"
+              }`}
+            >
+              {currentRole === "admin"
+                ? "Quản trị viên"
+                : "Quản trị cộng đồng"}
             </div>
 
             <h1 className="text-3xl font-bold">
@@ -717,6 +752,18 @@ export default function AdminPage() {
           </div>
 
           <div className="flex gap-2">
+            {currentRole === "admin" && (
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = "/admin/roles";
+                }}
+                className="rounded-md bg-red-500/15 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/25"
+              >
+                Phân quyền
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => {
@@ -746,6 +793,7 @@ export default function AdminPage() {
         )}
 
 
+        {currentRole === "admin" && (
         <section className="mb-5 rounded-xl bg-[#313338] p-5 shadow">
           <div className="mb-4">
             <h2 className="text-xl font-bold">
@@ -836,6 +884,8 @@ export default function AdminPage() {
           </div>
         </section>
 
+        )}
+
         <section className="mb-5 rounded-xl bg-[#313338] p-5 shadow">
           <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
@@ -844,7 +894,7 @@ export default function AdminPage() {
               </h2>
 
               <p className="mt-1 text-sm text-gray-400">
-                Tìm và khóa chat thành viên, kể cả khi họ chưa gửi tin nhắn.
+                Tìm và khóa chat thành viên. QT chỉ quản lý thành viên TV; AD quản lý toàn bộ.
               </p>
             </div>
 
@@ -865,8 +915,11 @@ export default function AdminPage() {
               );
               const isWorking =
                 workingUserId === profile.id;
-              const isCurrentAdmin =
+              const isCurrentUser =
                 profile.id === adminUserId;
+              const protectedFromModerator =
+                currentRole === "moderator" &&
+                profile.role !== "member";
 
               return (
                 <article
@@ -893,9 +946,11 @@ export default function AdminPage() {
                         {profile.username}
                       </strong>
 
-                      {isCurrentAdmin && (
-                        <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-xs font-semibold text-red-300">
-                          Admin
+                      <MemberBadge role={profile.role} />
+
+                      {isCurrentUser && (
+                        <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold text-gray-300">
+                          Bạn
                         </span>
                       )}
 
@@ -912,8 +967,8 @@ export default function AdminPage() {
                       </p>
                     )}
 
-                    <p className="mt-1 truncate text-xs text-gray-600">
-                      {profile.id}
+                    <p className="mt-1 truncate text-xs text-gray-500">
+                      {formatPublicId(profile.public_id)} · {profile.email}
                     </p>
                   </div>
 
@@ -940,7 +995,9 @@ export default function AdminPage() {
                         )
                       }
                       disabled={
-                        isWorking || isCurrentAdmin
+                        isWorking ||
+                        isCurrentUser ||
+                        protectedFromModerator
                       }
                       className="shrink-0 rounded-md bg-orange-500 px-3 py-2 text-sm font-semibold hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40"
                     >
