@@ -68,6 +68,20 @@ type CallHistoryRow = {
   ended_by: string | null;
 };
 
+type ConversationTimelineItem =
+  | {
+      kind: "message";
+      key: string;
+      createdAt: string;
+      message: DirectMessageRow;
+    }
+  | {
+      kind: "call";
+      key: string;
+      createdAt: string;
+      call: CallHistoryRow;
+    };
+
 export default function MessagesPage() {
   const [currentUserId, setCurrentUserId] = useState("");
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -108,8 +122,6 @@ export default function MessagesPage() {
   const [callHistory, setCallHistory] = useState<
     CallHistoryRow[]
   >([]);
-  const [showCallHistory, setShowCallHistory] =
-    useState(false);
   const [callHistoryLoading, setCallHistoryLoading] =
     useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -156,6 +168,31 @@ export default function MessagesPage() {
         .includes(query),
     );
   }, [profiles, searchQuery]);
+
+  const conversationTimeline =
+    useMemo<ConversationTimelineItem[]>(() => {
+      const messageItems: ConversationTimelineItem[] =
+        messages.map((message) => ({
+          kind: "message",
+          key: `message-${message.id}`,
+          createdAt: message.created_at,
+          message,
+        }));
+
+      const callItems: ConversationTimelineItem[] =
+        callHistory.map((callItem) => ({
+          kind: "call",
+          key: `call-${callItem.id}`,
+          createdAt: callItem.created_at,
+          call: callItem,
+        }));
+
+      return [...messageItems, ...callItems].sort(
+        (left, right) =>
+          new Date(left.createdAt).getTime() -
+          new Date(right.createdAt).getTime(),
+      );
+    }, [callHistory, messages]);
 
   function callDurationText(callItem: CallHistoryRow) {
     if (!callItem.answered_at || !callItem.ended_at) {
@@ -208,6 +245,47 @@ export default function MessagesPage() {
     }
 
     return "Đã kết thúc";
+  }
+
+  function callEventTitle(callItem: CallHistoryRow) {
+    const outgoing =
+      callItem.caller_id === currentUserId;
+    const typeText =
+      callItem.call_type === "video"
+        ? "video"
+        : "thoại";
+
+    if (callItem.status === "ringing") {
+      return outgoing
+        ? `Đang gọi ${typeText}`
+        : `Cuộc gọi ${typeText} đến`;
+    }
+
+    if (callItem.status === "accepted") {
+      return `Cuộc gọi ${typeText} đang diễn ra`;
+    }
+
+    if (callItem.status === "declined") {
+      return outgoing
+        ? `Cuộc gọi ${typeText} bị từ chối`
+        : `Bạn đã từ chối cuộc gọi ${typeText}`;
+    }
+
+    if (callItem.status === "missed") {
+      return outgoing
+        ? `Cuộc gọi ${typeText} không được trả lời`
+        : `Cuộc gọi ${typeText} nhỡ`;
+    }
+
+    if (!callItem.answered_at) {
+      return outgoing
+        ? `Bạn đã hủy cuộc gọi ${typeText}`
+        : `Cuộc gọi ${typeText} đã kết thúc`;
+    }
+
+    return outgoing
+      ? `Bạn đã gọi ${typeText}`
+      : `Bạn đã nhận cuộc gọi ${typeText}`;
   }
 
   useEffect(() => {
@@ -821,12 +899,11 @@ export default function MessagesPage() {
     messagesEndRef.current?.scrollIntoView({
       behavior: "smooth",
     });
-  }, [messages.length]);
+  }, [callHistory.length, messages.length]);
 
   function selectMember(profile: ProfileRow) {
     setSelectedProfile(profile);
     setShowContacts(false);
-    setShowCallHistory(false);
     setMessageInput("");
 
     const nextUrl = `/messages?user=${encodeURIComponent(
@@ -1310,21 +1387,6 @@ export default function MessagesPage() {
                 <button
                   type="button"
                   onClick={() =>
-                    setShowCallHistory((current) => !current)
-                  }
-                  title="Lịch sử cuộc gọi"
-                  className={`rounded px-3 py-2 text-sm font-semibold ${
-                    showCallHistory
-                      ? "bg-white/20"
-                      : "bg-white/10 hover:bg-white/15"
-                  }`}
-                >
-                  🕘
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() =>
                     void toggleBlockSelected()
                   }
                   disabled={
@@ -1382,260 +1444,282 @@ export default function MessagesPage() {
                 </div>
               )}
 
-              <div className="mb-4 overflow-hidden rounded-lg border border-white/10 bg-[#2b2d31]">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setShowCallHistory((current) => !current)
-                  }
-                  className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-white/5"
-                >
-                  <span className="font-semibold">
-                    🕘 Lịch sử cuộc gọi
-                  </span>
-                  <span className="text-xs text-gray-400">
-                    {callHistory.length} cuộc gọi ·{" "}
-                    {showCallHistory ? "Thu gọn" : "Mở"}
-                  </span>
-                </button>
-
-                {showCallHistory && (
-                  <div className="border-t border-white/10 p-2">
-                    {callHistoryLoading ? (
-                      <p className="px-3 py-4 text-sm text-gray-400">
-                        Đang tải lịch sử cuộc gọi...
-                      </p>
-                    ) : callHistory.length === 0 ? (
-                      <p className="px-3 py-4 text-sm text-gray-400">
-                        Chưa có cuộc gọi với thành viên này.
-                      </p>
-                    ) : (
-                      <div className="space-y-1">
-                        {callHistory.map((callItem) => {
-                          const outgoing =
-                            callItem.caller_id ===
-                            currentUserId;
-                          const incomingMissed =
-                            callItem.status === "missed" &&
-                            !outgoing;
-                          const duration =
-                            callDurationText(callItem);
-
-                          return (
-                            <div
-                              key={callItem.id}
-                              className="flex items-center gap-3 rounded-md px-3 py-2 hover:bg-white/5"
-                            >
-                              <div
-                                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
-                                  incomingMissed
-                                    ? "bg-red-500/20 text-red-300"
-                                    : "bg-white/10"
-                                }`}
-                              >
-                                {callItem.call_type ===
-                                "video"
-                                  ? "🎥"
-                                  : "📞"}
-                              </div>
-
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span
-                                    className={`text-sm font-semibold ${
-                                      incomingMissed
-                                        ? "text-red-300"
-                                        : "text-white"
-                                    }`}
-                                  >
-                                    {outgoing ? "↗" : "↙"}{" "}
-                                    {callStatusText(callItem)}
-                                  </span>
-
-                                  {duration && (
-                                    <span className="text-xs text-gray-500">
-                                      {duration}
-                                    </span>
-                                  )}
-                                </div>
-
-                                <p className="text-xs text-gray-500">
-                                  {formatTime(
-                                    callItem.created_at,
-                                  )}
-                                </p>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void startCall(
-                                    callItem.call_type,
-                                  )
-                                }
-                                disabled={
-                                  startingCallType !== null ||
-                                  isSelectedBlocked ||
-                                  isSuspended ||
-                                  ["ringing", "accepted"].includes(
-                                    callItem.status,
-                                  )
-                                }
-                                className="shrink-0 rounded bg-indigo-500/20 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-40"
-                              >
-                                Gọi lại
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {messagesLoading ? (
+              {messagesLoading || callHistoryLoading ? (
                 <p className="text-sm text-gray-400">
                   Đang tải cuộc trò chuyện...
                 </p>
-              ) : messages.length === 0 ? (
+              ) : conversationTimeline.length === 0 ? (
                 <div className="flex h-full items-center justify-center text-center text-gray-400">
                   <div>
                     <div className="text-5xl">💬</div>
                     <p className="mt-3">
-                      Chưa có tin nhắn. Hãy bắt đầu cuộc
-                      trò chuyện.
+                      Chưa có tin nhắn hoặc cuộc gọi. Hãy
+                      bắt đầu cuộc trò chuyện.
                     </p>
                   </div>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {messages.map((message) => {
-                    const isMine =
-                      message.sender_id ===
-                      currentUserId;
-                    const isEditing =
-                      editingId === message.id;
-                    const isWorking =
-                      workingId === message.id;
+                  {conversationTimeline.map(
+                    (timelineItem) => {
+                      if (timelineItem.kind === "call") {
+                        const callItem =
+                          timelineItem.call;
+                        const outgoing =
+                          callItem.caller_id ===
+                          currentUserId;
+                        const incomingMissed =
+                          callItem.status === "missed" &&
+                          !outgoing;
+                        const duration =
+                          callDurationText(callItem);
+                        const callActive = [
+                          "ringing",
+                          "accepted",
+                        ].includes(callItem.status);
 
-                    return (
-                      <article
-                        key={message.id}
-                        className={`group flex ${
-                          isMine
-                            ? "justify-end"
-                            : "justify-start"
-                        }`}
-                      >
-                        <div
-                          className={`relative max-w-[85%] rounded-2xl px-4 py-3 md:max-w-[70%] ${
-                            isMine
-                              ? "rounded-br-md bg-indigo-500"
-                              : "rounded-bl-md bg-[#2b2d31]"
-                          }`}
-                        >
-                          {isEditing ? (
-                            <div className="min-w-64">
-                              <textarea
-                                value={editingContent}
-                                onChange={(event) =>
-                                  setEditingContent(
-                                    event.target.value,
-                                  )
-                                }
-                                maxLength={2000}
-                                rows={3}
-                                autoFocus
-                                className="w-full resize-none rounded-md bg-[#1e1f22] px-3 py-2 outline-none ring-indigo-300 focus:ring-2"
-                              />
+                        return (
+                          <article
+                            key={timelineItem.key}
+                            className={`flex ${
+                              outgoing
+                                ? "justify-end"
+                                : "justify-start"
+                            }`}
+                          >
+                            <div
+                              className={`max-w-[88%] rounded-2xl border px-4 py-3 shadow-sm md:max-w-[72%] ${
+                                incomingMissed
+                                  ? "rounded-bl-md border-red-500/30 bg-red-500/10"
+                                  : outgoing
+                                    ? "rounded-br-md border-indigo-400/30 bg-indigo-500/20"
+                                    : "rounded-bl-md border-white/10 bg-[#2b2d31]"
+                              }`}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div
+                                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-lg ${
+                                    incomingMissed
+                                      ? "bg-red-500/20"
+                                      : outgoing
+                                        ? "bg-indigo-500/25"
+                                        : "bg-white/10"
+                                  }`}
+                                >
+                                  {callItem.call_type ===
+                                  "video"
+                                    ? "🎥"
+                                    : "📞"}
+                                </div>
 
-                              <div className="mt-2 flex gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <p
+                                    className={`text-sm font-bold ${
+                                      incomingMissed
+                                        ? "text-red-300"
+                                        : "text-white"
+                                    }`}
+                                  >
+                                    {callEventTitle(
+                                      callItem,
+                                    )}
+                                  </p>
+
+                                  <p
+                                    className={`mt-0.5 text-xs ${
+                                      incomingMissed
+                                        ? "text-red-300/80"
+                                        : outgoing
+                                          ? "text-indigo-100/80"
+                                          : "text-gray-400"
+                                    }`}
+                                  >
+                                    {callStatusText(
+                                      callItem,
+                                    )}
+                                    {duration
+                                      ? ` · ${duration}`
+                                      : ""}
+                                  </p>
+
+                                  <p
+                                    className={`mt-1 text-[11px] ${
+                                      outgoing
+                                        ? "text-indigo-100/60"
+                                        : "text-gray-500"
+                                    }`}
+                                  >
+                                    {formatTime(
+                                      callItem.created_at,
+                                    )}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {!callActive && (
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    void saveEditedMessage(
-                                      message.id,
+                                    void startCall(
+                                      callItem.call_type,
                                     )
                                   }
                                   disabled={
-                                    isWorking ||
-                                    !editingContent.trim()
+                                    startingCallType !==
+                                      null ||
+                                    isSelectedBlocked ||
+                                    isSuspended
                                   }
-                                  className="rounded bg-white px-3 py-1.5 text-xs font-semibold text-indigo-600 disabled:opacity-50"
+                                  className={`mt-3 w-full rounded-lg px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                                    incomingMissed
+                                      ? "bg-red-500/20 text-red-200 hover:bg-red-500/30"
+                                      : outgoing
+                                        ? "bg-indigo-500/25 text-indigo-100 hover:bg-indigo-500/35"
+                                        : "bg-white/10 text-white hover:bg-white/15"
+                                  }`}
                                 >
-                                  Lưu
+                                  {startingCallType ===
+                                  callItem.call_type
+                                    ? "Đang gọi..."
+                                    : callItem.call_type ===
+                                        "video"
+                                      ? "🎥 Gọi video lại"
+                                      : "📞 Gọi lại"}
+                                </button>
+                              )}
+                            </div>
+                          </article>
+                        );
+                      }
+
+                      const message =
+                        timelineItem.message;
+                      const isMine =
+                        message.sender_id ===
+                        currentUserId;
+                      const isEditing =
+                        editingId === message.id;
+                      const isWorking =
+                        workingId === message.id;
+
+                      return (
+                        <article
+                          key={timelineItem.key}
+                          className={`group flex ${
+                            isMine
+                              ? "justify-end"
+                              : "justify-start"
+                          }`}
+                        >
+                          <div
+                            className={`relative max-w-[85%] rounded-2xl px-4 py-3 md:max-w-[70%] ${
+                              isMine
+                                ? "rounded-br-md bg-indigo-500"
+                                : "rounded-bl-md bg-[#2b2d31]"
+                            }`}
+                          >
+                            {isEditing ? (
+                              <div className="min-w-64">
+                                <textarea
+                                  value={editingContent}
+                                  onChange={(event) =>
+                                    setEditingContent(
+                                      event.target.value,
+                                    )
+                                  }
+                                  maxLength={2000}
+                                  rows={3}
+                                  autoFocus
+                                  className="w-full resize-none rounded-md bg-[#1e1f22] px-3 py-2 outline-none ring-indigo-300 focus:ring-2"
+                                />
+
+                                <div className="mt-2 flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void saveEditedMessage(
+                                        message.id,
+                                      )
+                                    }
+                                    disabled={
+                                      isWorking ||
+                                      !editingContent.trim()
+                                    }
+                                    className="rounded bg-white px-3 py-1.5 text-xs font-semibold text-indigo-600 disabled:opacity-50"
+                                  >
+                                    Lưu
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingId(null);
+                                      setEditingContent("");
+                                    }}
+                                    className="rounded bg-black/20 px-3 py-1.5 text-xs"
+                                  >
+                                    Hủy
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <p className="whitespace-pre-wrap break-words">
+                                  {message.content}
+                                </p>
+
+                                <div
+                                  className={`mt-1 text-[11px] ${
+                                    isMine
+                                      ? "text-indigo-100"
+                                      : "text-gray-500"
+                                  }`}
+                                >
+                                  {formatTime(
+                                    message.created_at,
+                                  )}
+                                  {message.edited_at
+                                    ? " · đã sửa"
+                                    : ""}
+                                  {isMine
+                                    ? message.read_at
+                                      ? " · Đã xem"
+                                      : " · Đã gửi"
+                                    : ""}
+                                </div>
+                              </>
+                            )}
+
+                            {isMine && !isEditing && (
+                              <div className="absolute -top-8 right-0 hidden overflow-hidden rounded-md bg-[#1e1f22] shadow-lg group-hover:flex">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    beginEditing(message)
+                                  }
+                                  className="px-3 py-1.5 text-xs hover:bg-white/10"
+                                >
+                                  Sửa
                                 </button>
 
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    setEditingId(null);
-                                    setEditingContent("");
-                                  }}
-                                  className="rounded bg-black/20 px-3 py-1.5 text-xs"
+                                  onClick={() =>
+                                    void deleteMessage(
+                                      message.id,
+                                    )
+                                  }
+                                  className="px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/15"
                                 >
-                                  Hủy
+                                  Xóa
                                 </button>
                               </div>
-                            </div>
-                          ) : (
-                            <>
-                              <p className="whitespace-pre-wrap break-words">
-                                {message.content}
-                              </p>
-
-                              <div
-                                className={`mt-1 text-[11px] ${
-                                  isMine
-                                    ? "text-indigo-100"
-                                    : "text-gray-500"
-                                }`}
-                              >
-                                {formatTime(
-                                  message.created_at,
-                                )}
-                                {message.edited_at
-                                  ? " · đã sửa"
-                                  : ""}
-                                {isMine
-                                  ? message.read_at
-                                    ? " · Đã xem"
-                                    : " · Đã gửi"
-                                  : ""}
-                              </div>
-                            </>
-                          )}
-
-                          {isMine && !isEditing && (
-                            <div className="absolute -top-8 right-0 hidden overflow-hidden rounded-md bg-[#1e1f22] shadow-lg group-hover:flex">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  beginEditing(message)
-                                }
-                                className="px-3 py-1.5 text-xs hover:bg-white/10"
-                              >
-                                Sửa
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void deleteMessage(
-                                    message.id,
-                                  )
-                                }
-                                className="px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/15"
-                              >
-                                Xóa
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </article>
-                    );
-                  })}
+                            )}
+                          </div>
+                        </article>
+                      );
+                    },
+                  )}
 
                   <div ref={messagesEndRef} />
                 </div>
