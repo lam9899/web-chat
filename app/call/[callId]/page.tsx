@@ -103,6 +103,9 @@ function CompactCallStage({
   errorMessage,
   onEnd,
 }: CompactCallStageProps) {
+  const [speakerMuted, setSpeakerMuted] =
+    useState(false);
+
   const tracks = useTracks([
     {
       source: Track.Source.Camera,
@@ -178,10 +181,36 @@ function CompactCallStage({
 
             <div className="hidden h-8 w-px shrink-0 bg-white/10 sm:block" />
 
-            <div className="flex items-center gap-1">
+            <div className="flex flex-wrap items-center justify-center gap-1">
               <MediaDeviceMenu kind="audioinput">
                 🎙 Chọn mic
               </MediaDeviceMenu>
+
+              <MediaDeviceMenu kind="audiooutput">
+                🔊 Chọn loa
+              </MediaDeviceMenu>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setSpeakerMuted((current) => !current)
+                }
+                title={
+                  speakerMuted
+                    ? "Bật âm thanh cuộc gọi"
+                    : "Tắt âm thanh cuộc gọi"
+                }
+                aria-pressed={speakerMuted}
+                className={`h-11 shrink-0 rounded-xl border px-3 text-sm font-semibold text-white ${
+                  speakerMuted
+                    ? "border-red-400/40 bg-red-500/20 hover:bg-red-500/30"
+                    : "border-white/10 bg-white/10 hover:bg-white/15"
+                }`}
+              >
+                {speakerMuted
+                  ? "🔇 Bật loa"
+                  : "🔊 Tắt loa"}
+              </button>
 
               {callType === "video" && (
                 <MediaDeviceMenu kind="videoinput">
@@ -203,7 +232,7 @@ function CompactCallStage({
           </div>
 
           <p className="mt-1 text-center text-[11px] text-gray-500">
-            Dùng “Chọn mic” hoặc “Chọn camera” để đổi thiết bị.
+            Chọn mic, loa, camera hoặc tắt tiếng loa ngay trong cuộc gọi.
           </p>
         </footer>
 
@@ -213,7 +242,7 @@ function CompactCallStage({
           </div>
         )}
 
-        <RoomAudioRenderer />
+        <RoomAudioRenderer muted={speakerMuted} />
       </div>
     </div>
   );
