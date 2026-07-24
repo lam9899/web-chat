@@ -1489,7 +1489,7 @@ export default function MessagesPage() {
                             }`}
                           >
                             <div
-                              className={`max-w-[88%] rounded-2xl border px-4 py-3 shadow-sm md:max-w-[72%] ${
+                              className={`max-w-[92%] rounded-2xl border px-3 py-2.5 shadow-sm md:max-w-[76%] ${
                                 incomingMissed
                                   ? "rounded-bl-md border-red-500/30 bg-red-500/10"
                                   : outgoing
@@ -1497,9 +1497,9 @@ export default function MessagesPage() {
                                     : "rounded-bl-md border-white/10 bg-[#2b2d31]"
                               }`}
                             >
-                              <div className="flex items-start gap-3">
+                              <div className="flex items-center gap-2.5">
                                 <div
-                                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-lg ${
+                                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-base ${
                                     incomingMissed
                                       ? "bg-red-500/20"
                                       : outgoing
@@ -1515,7 +1515,7 @@ export default function MessagesPage() {
 
                                 <div className="min-w-0 flex-1">
                                   <p
-                                    className={`text-sm font-bold ${
+                                    className={`truncate text-sm font-bold ${
                                       incomingMissed
                                         ? "text-red-300"
                                         : "text-white"
@@ -1527,7 +1527,7 @@ export default function MessagesPage() {
                                   </p>
 
                                   <p
-                                    className={`mt-0.5 text-xs ${
+                                    className={`mt-0.5 truncate text-xs ${
                                       incomingMissed
                                         ? "text-red-300/80"
                                         : outgoing
@@ -1544,7 +1544,7 @@ export default function MessagesPage() {
                                   </p>
 
                                   <p
-                                    className={`mt-1 text-[11px] ${
+                                    className={`mt-0.5 text-[11px] ${
                                       outgoing
                                         ? "text-indigo-100/60"
                                         : "text-gray-500"
@@ -1555,39 +1555,45 @@ export default function MessagesPage() {
                                     )}
                                   </p>
                                 </div>
-                              </div>
 
-                              {!callActive && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void startCall(
-                                      callItem.call_type,
-                                    )
-                                  }
-                                  disabled={
-                                    startingCallType !==
-                                      null ||
-                                    isSelectedBlocked ||
-                                    isSuspended
-                                  }
-                                  className={`mt-3 w-full rounded-lg px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                                    incomingMissed
-                                      ? "bg-red-500/20 text-red-200 hover:bg-red-500/30"
-                                      : outgoing
-                                        ? "bg-indigo-500/25 text-indigo-100 hover:bg-indigo-500/35"
-                                        : "bg-white/10 text-white hover:bg-white/15"
-                                  }`}
-                                >
-                                  {startingCallType ===
-                                  callItem.call_type
-                                    ? "Đang gọi..."
-                                    : callItem.call_type ===
-                                        "video"
-                                      ? "🎥 Gọi video lại"
-                                      : "📞 Gọi lại"}
-                                </button>
-                              )}
+                                {!callActive && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void startCall(
+                                        callItem.call_type,
+                                      )
+                                    }
+                                    disabled={
+                                      startingCallType !==
+                                        null ||
+                                      isSelectedBlocked ||
+                                      isSuspended
+                                    }
+                                    title={
+                                      callItem.call_type ===
+                                      "video"
+                                        ? "Gọi video lại"
+                                        : "Gọi lại"
+                                    }
+                                    className={`ml-1 shrink-0 rounded-lg px-2.5 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                                      incomingMissed
+                                        ? "bg-red-500/20 text-red-200 hover:bg-red-500/30"
+                                        : outgoing
+                                          ? "bg-indigo-500/25 text-indigo-100 hover:bg-indigo-500/35"
+                                          : "bg-white/10 text-white hover:bg-white/15"
+                                    }`}
+                                  >
+                                    {startingCallType ===
+                                    callItem.call_type
+                                      ? "..."
+                                      : callItem.call_type ===
+                                          "video"
+                                        ? "🎥 Gọi lại"
+                                        : "📞 Gọi lại"}
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           </article>
                         );
