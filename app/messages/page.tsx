@@ -9,6 +9,11 @@ import {
 } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { getNotificationsEnabled } from "@/utils/notifications";
+import FriendManager from "./friend-manager";
+import MemberBadge, {
+  formatPublicId,
+  type MemberRole,
+} from "@/components/member-badge";
 
 const supabase = createClient();
 
@@ -16,8 +21,9 @@ type ProfileRow = {
   id: string;
   username: string;
   avatar_url: string | null;
+  public_id: number;
+  role: MemberRole;
   created_at: string;
-  updated_at: string;
 };
 
 type DirectMessageRow = {
@@ -471,6 +477,7 @@ export default function MessagesPage() {
   ] = useState(true);
 
   const selectedProfileRef = useRef<ProfileRow | null>(null);
+  const profilesRef = useRef<ProfileRow[]>([]);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messageInputRef = useRef<HTMLInputElement | null>(
     null,
@@ -482,6 +489,10 @@ export default function MessagesPage() {
   useEffect(() => {
     selectedProfileRef.current = selectedProfile;
   }, [selectedProfile]);
+
+  useEffect(() => {
+    profilesRef.current = profiles;
+  }, [profiles]);
 
   useEffect(() => {
     privateChatPreferencesRef.current =
@@ -738,13 +749,7 @@ export default function MessagesPage() {
           error: preferenceError,
         },
       ] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select(
-            "id, username, avatar_url, created_at, updated_at",
-          )
-          .neq("id", user.id)
-          .order("username", { ascending: true }),
+        supabase.rpc("get_my_friends"),
         supabase
           .from("user_suspensions")
           .select("user_id, reason, suspended_until")
@@ -774,7 +779,8 @@ export default function MessagesPage() {
           `Không thể tải danh sách thành viên: ${profileError.message}`,
         );
       } else {
-        const loadedProfiles = profileData ?? [];
+        const loadedProfiles = (profileData ?? []) as ProfileRow[];
+        profilesRef.current = loadedProfiles;
         setProfiles(loadedProfiles);
 
         const requestedUserId = new URLSearchParams(
@@ -881,12 +887,11 @@ export default function MessagesPage() {
               if (
                 newMessage.receiver_id === user.id
               ) {
-                const senderProfile = (
-                  profileData ?? []
-                ).find(
-                  (profile) =>
-                    profile.id === newMessage.sender_id,
-                );
+                const senderProfile =
+                  profilesRef.current.find(
+                    (profile) =>
+                      profile.id === newMessage.sender_id,
+                  );
 
                 if (
                   document.visibilityState !== "visible" ||
@@ -993,13 +998,9 @@ export default function MessagesPage() {
           async () => {
             if (!active) return;
 
-            const { data, error } = await supabase
-              .from("profiles")
-              .select(
-                "id, username, avatar_url, created_at, updated_at",
-              )
-              .neq("id", user.id)
-              .order("username", { ascending: true });
+            const { data, error } = await supabase.rpc(
+              "get_my_friends",
+            );
 
             if (!active) return;
 
@@ -1010,7 +1011,7 @@ export default function MessagesPage() {
               return;
             }
 
-            const nextProfiles = data ?? [];
+            const nextProfiles = (data ?? []) as ProfileRow[];
             setProfiles(nextProfiles);
 
             const selectedId =
@@ -1083,6 +1084,38 @@ export default function MessagesPage() {
                   return next;
                 });
               }
+            }
+          },
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "friendships",
+            filter: `user_id=eq.${user.id}`,
+          },
+          async () => {
+            if (!active) return;
+
+            const { data, error } = await supabase.rpc(
+              "get_my_friends",
+            );
+
+            if (!active || error) return;
+
+            const nextProfiles = (data ?? []) as ProfileRow[];
+            setProfiles(nextProfiles);
+
+            const selectedId =
+              selectedProfileRef.current?.id;
+
+            if (selectedId) {
+              const updatedSelected =
+                nextProfiles.find(
+                  (profile) => profile.id === selectedId,
+                ) ?? null;
+              setSelectedProfile(updatedSelected);
             }
           },
         )
@@ -1848,15 +1881,23 @@ export default function MessagesPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                window.location.href = "/";
-              }}
-              className="rounded bg-white/10 px-3 py-2 text-sm font-semibold hover:bg-white/15"
-            >
-              Chat chung
-            </button>
+            <div className="flex items-center gap-2">
+              <FriendManager
+                onFriendsChanged={() => {
+                  window.location.reload();
+                }}
+              />
+
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = "/";
+                }}
+                className="rounded bg-white/10 px-3 py-2 text-sm font-semibold hover:bg-white/15"
+              >
+                Chat chung
+              </button>
+            </div>
           </div>
 
           <input
@@ -1864,7 +1905,7 @@ export default function MessagesPage() {
             onChange={(event) =>
               setSearchQuery(event.target.value)
             }
-            placeholder="Tìm thành viên..."
+            placeholder="Tìm trong bạn bè..."
             className="mt-4 w-full rounded-md bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
           />
         </header>
@@ -1872,7 +1913,7 @@ export default function MessagesPage() {
         <div className="flex-1 overflow-y-auto p-2">
           {filteredProfiles.length === 0 ? (
             <p className="p-4 text-sm text-gray-400">
-              Chưa có thành viên khác.
+              Chưa có bạn bè. Bấm biểu tượng 👥 để kết bạn.
             </p>
           ) : (
             filteredProfiles.map((profile) => {
@@ -1906,8 +1947,16 @@ export default function MessagesPage() {
                     </div>
                   )}
 
-                  <span className="min-w-0 flex-1 truncate font-semibold">
-                    {profile.username}
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-semibold">
+                        {profile.username}
+                      </span>
+                      <MemberBadge role={profile.role} />
+                    </span>
+                    <span className="mt-0.5 block text-xs text-gray-500">
+                      {formatPublicId(profile.public_id)}
+                    </span>
                   </span>
 
                   {unread > 0 && (
@@ -1960,11 +2009,14 @@ export default function MessagesPage() {
               )}
 
               <div className="min-w-0">
-                <h2 className="truncate font-bold">
-                  {selectedProfile.username}
-                </h2>
+                <div className="flex min-w-0 items-center gap-2">
+                  <h2 className="truncate font-bold">
+                    {selectedProfile.username}
+                  </h2>
+                  <MemberBadge role={selectedProfile.role} />
+                </div>
                 <p className="text-xs text-gray-400">
-                  Tin nhắn riêng
+                  {formatPublicId(selectedProfile.public_id)} · Bạn bè
                 </p>
               </div>
 
@@ -2516,7 +2568,7 @@ export default function MessagesPage() {
                 Chọn một thành viên
               </h2>
               <p className="mt-2">
-                Chọn người ở danh sách bên trái để bắt đầu
+                Chọn một người bạn ở danh sách bên trái để bắt đầu
                 trò chuyện riêng.
               </p>
 
