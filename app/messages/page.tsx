@@ -166,6 +166,45 @@ const chatColorOptions: Array<{
   },
 ];
 
+const emojiOptions = [
+  "😀",
+  "😃",
+  "😄",
+  "😁",
+  "😂",
+  "🤣",
+  "😊",
+  "😍",
+  "🥰",
+  "😘",
+  "😎",
+  "🤔",
+  "😢",
+  "😭",
+  "😡",
+  "👍",
+  "👎",
+  "👏",
+  "🙏",
+  "💪",
+  "❤️",
+  "🧡",
+  "💛",
+  "💚",
+  "💙",
+  "💜",
+  "🔥",
+  "🎉",
+  "✨",
+  "✅",
+  "❌",
+  "💯",
+  "🥳",
+  "🤝",
+  "👋",
+  "🌹",
+] as const;
+
 const notificationToneOptions: Array<{
   id: NotificationToneId;
   label: string;
@@ -379,6 +418,12 @@ export default function MessagesPage() {
     null,
   );
   const [editingContent, setEditingContent] = useState("");
+  const [
+    openMessageMenuId,
+    setOpenMessageMenuId,
+  ] = useState<number | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] =
+    useState(false);
 
   const [suspension, setSuspension] =
     useState<SuspensionRow | null>(null);
@@ -427,6 +472,9 @@ export default function MessagesPage() {
 
   const selectedProfileRef = useRef<ProfileRow | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messageInputRef = useRef<HTMLInputElement | null>(
+    null,
+  );
   const privateChatPreferencesRef = useRef<
     Record<string, PrivateChatPreference>
   >({});
@@ -439,6 +487,34 @@ export default function MessagesPage() {
     privateChatPreferencesRef.current =
       privateChatPreferences;
   }, [privateChatPreferences]);
+
+  useEffect(() => {
+    function closeFloatingMenus(event: MouseEvent) {
+      const target = event.target as HTMLElement | null;
+
+      if (
+        target?.closest("[data-message-menu]") ||
+        target?.closest("[data-emoji-picker]")
+      ) {
+        return;
+      }
+
+      setOpenMessageMenuId(null);
+      setShowEmojiPicker(false);
+    }
+
+    document.addEventListener(
+      "mousedown",
+      closeFloatingMenus,
+    );
+
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        closeFloatingMenus,
+      );
+    };
+  }, []);
 
   const selectedPrivateChatPreference = useMemo(
     () =>
@@ -1328,6 +1404,8 @@ export default function MessagesPage() {
     setSelectedProfile(profile);
     setShowContacts(false);
     setShowPrivateChatSettings(false);
+    setOpenMessageMenuId(null);
+    setShowEmojiPicker(false);
     setMessageInput("");
 
     const nextUrl = `/messages?user=${encodeURIComponent(
@@ -1335,6 +1413,32 @@ export default function MessagesPage() {
     )}`;
 
     window.history.replaceState(null, "", nextUrl);
+  }
+
+  function insertEmoji(emoji: string) {
+    const input = messageInputRef.current;
+    const start =
+      input?.selectionStart ?? messageInput.length;
+    const end = input?.selectionEnd ?? start;
+
+    const nextMessage =
+      messageInput.slice(0, start) +
+      emoji +
+      messageInput.slice(end);
+
+    if (nextMessage.length > 2000) return;
+
+    setMessageInput(nextMessage);
+    setShowEmojiPicker(false);
+
+    window.requestAnimationFrame(() => {
+      const cursorPosition = start + emoji.length;
+      input?.focus();
+      input?.setSelectionRange(
+        cursorPosition,
+        cursorPosition,
+      );
+    });
   }
 
   async function sendMessage(
@@ -1594,6 +1698,8 @@ export default function MessagesPage() {
   }
 
   function beginEditing(message: DirectMessageRow) {
+    setOpenMessageMenuId(null);
+
     if (isSuspended) {
       setErrorMessage(
         "Tài khoản của bạn đang bị khóa quyền chat.",
@@ -2223,28 +2329,68 @@ export default function MessagesPage() {
                             )}
 
                             {isMine && !isEditing && (
-                              <div className="absolute -top-8 right-0 hidden overflow-hidden rounded-md bg-[#1e1f22] shadow-lg group-hover:flex">
+                              <div
+                                className="absolute -right-3 -top-3 z-30"
+                                data-message-menu
+                              >
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    beginEditing(message)
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setOpenMessageMenuId(
+                                      (current) =>
+                                        current === message.id
+                                          ? null
+                                          : message.id,
+                                    );
+                                  }}
+                                  aria-label="Tùy chọn tin nhắn"
+                                  aria-expanded={
+                                    openMessageMenuId ===
+                                    message.id
                                   }
-                                  className="px-3 py-1.5 text-xs hover:bg-white/10"
+                                  title="Tùy chọn"
+                                  className={`flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-[#1e1f22] pb-1 text-lg font-bold leading-none text-gray-300 shadow-lg transition hover:bg-[#111214] hover:text-white ${
+                                    openMessageMenuId ===
+                                    message.id
+                                      ? "opacity-100"
+                                      : "opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                                  }`}
                                 >
-                                  Sửa
+                                  …
                                 </button>
 
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void deleteMessage(
-                                      message.id,
-                                    )
-                                  }
-                                  className="px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/15"
-                                >
-                                  Xóa
-                                </button>
+                                {openMessageMenuId ===
+                                  message.id && (
+                                  <div className="absolute right-0 top-8 z-40 min-w-32 overflow-hidden rounded-xl border border-white/10 bg-[#1e1f22] py-1 shadow-2xl">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        beginEditing(message)
+                                      }
+                                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-white/10"
+                                    >
+                                      <span>✏️</span>
+                                      <span>Sửa</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenMessageMenuId(
+                                          null,
+                                        );
+                                        void deleteMessage(
+                                          message.id,
+                                        );
+                                      }}
+                                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-300 hover:bg-red-500/15"
+                                    >
+                                      <span>🗑️</span>
+                                      <span>Xóa</span>
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -2262,11 +2408,73 @@ export default function MessagesPage() {
               onSubmit={sendMessage}
               className="shrink-0 border-t border-black/20 bg-[#313338] p-3 md:p-4"
             >
-              <div className="flex rounded-lg bg-[#383a40] px-4">
+              <div className="flex items-center rounded-xl bg-[#383a40] px-2">
+                <div
+                  className="relative flex shrink-0 items-center"
+                  data-emoji-picker
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowEmojiPicker(
+                        (current) => !current,
+                      )
+                    }
+                    disabled={
+                      isSuspended || isSelectedBlocked
+                    }
+                    aria-label="Chọn biểu tượng cảm xúc"
+                    aria-expanded={showEmojiPicker}
+                    title="Biểu tượng cảm xúc"
+                    className="flex h-10 w-10 items-center justify-center rounded-full text-xl transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    😊
+                  </button>
+
+                  {showEmojiPicker && (
+                    <div className="absolute bottom-12 left-0 z-50 w-72 rounded-2xl border border-white/10 bg-[#1e1f22] p-3 shadow-2xl">
+                      <div className="mb-2 flex items-center justify-between">
+                        <strong className="text-sm">
+                          Biểu tượng cảm xúc
+                        </strong>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowEmojiPicker(false)
+                          }
+                          aria-label="Đóng bảng cảm xúc"
+                          className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-lg text-gray-300 hover:bg-white/15 hover:text-white"
+                        >
+                          ×
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-8 gap-1">
+                        {emojiOptions.map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            onClick={() =>
+                              insertEmoji(emoji)
+                            }
+                            className="flex aspect-square items-center justify-center rounded-lg text-xl transition hover:bg-white/10 hover:scale-110"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <input
+                  ref={messageInputRef}
                   value={messageInput}
                   onChange={(event) =>
                     setMessageInput(event.target.value)
+                  }
+                  onFocus={() =>
+                    setOpenMessageMenuId(null)
                   }
                   disabled={
                     isSuspended || isSelectedBlocked
@@ -2279,7 +2487,7 @@ export default function MessagesPage() {
                         ? "Bạn đã chặn thành viên này"
                         : `Nhắn tin cho ${selectedProfile.username}`
                   }
-                  className="min-w-0 flex-1 bg-transparent py-3 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
+                  className="min-w-0 flex-1 bg-transparent px-2 py-3 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
                 />
 
                 <button
@@ -2290,7 +2498,7 @@ export default function MessagesPage() {
                     isSelectedBlocked ||
                     !messageInput.trim()
                   }
-                  className="ml-3 my-1.5 rounded px-4 text-sm font-semibold transition hover:brightness-110 disabled:opacity-50"
+                  className="my-1.5 ml-2 rounded-lg px-4 py-2 text-sm font-semibold transition hover:brightness-110 disabled:opacity-50"
                   style={{
                     backgroundColor: activeChatColor.hex,
                   }}
