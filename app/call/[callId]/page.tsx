@@ -105,6 +105,27 @@ function CompactCallStage({
 }: CompactCallStageProps) {
   const [speakerMuted, setSpeakerMuted] =
     useState(false);
+  const [showDeviceSettings, setShowDeviceSettings] =
+    useState(false);
+
+  useEffect(() => {
+    if (!showDeviceSettings) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setShowDeviceSettings(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleKeyDown,
+      );
+    };
+  }, [showDeviceSettings]);
 
   const tracks = useTracks([
     {
@@ -166,58 +187,61 @@ function CompactCallStage({
         </section>
 
         <footer className="relative z-40 shrink-0 overflow-visible">
-          <div className="relative mx-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-2 overflow-visible rounded-2xl border border-white/10 bg-[#1b1c21] p-2 shadow-2xl [&_.lk-button]:!h-11 [&_.lk-button]:!min-w-11 [&_.lk-button]:!rounded-xl [&_.lk-button]:!border-white/10 [&_.lk-button]:!bg-white/10 [&_.lk-button]:!px-3 [&_.lk-button]:!text-white [&_.lk-button:hover]:!bg-white/15 [&_.lk-button-group-menu]:!hidden [&_.lk-control-bar]:!gap-1 [&_.lk-control-bar]:!border-0 [&_.lk-control-bar]:!bg-transparent [&_.lk-control-bar]:!p-0 [&_.lk-device-menu]:!z-[300] [&_.lk-device-menu]:!max-h-[55vh] [&_.lk-device-menu]:!overflow-y-auto">
+          <div className="relative mx-auto flex w-fit max-w-full items-center justify-center gap-2 overflow-visible rounded-2xl border border-white/10 bg-[#1b1c21] p-2 shadow-2xl [&_.lk-button]:!h-11 [&_.lk-button]:!min-w-11 [&_.lk-button]:!rounded-xl [&_.lk-button]:!border-white/10 [&_.lk-button]:!bg-white/10 [&_.lk-button]:!px-3 [&_.lk-button]:!text-white [&_.lk-button:hover]:!bg-white/15 [&_.lk-button-group-menu]:!hidden [&_.lk-control-bar]:!gap-1 [&_.lk-control-bar]:!border-0 [&_.lk-control-bar]:!bg-transparent [&_.lk-control-bar]:!p-0">
             <ControlBar
               variation="minimal"
               saveUserChoices
               controls={{
                 microphone: true,
-                camera: callType === "video",
-                screenShare: callType === "video",
+                camera: true,
+                screenShare: true,
                 chat: false,
                 leave: false,
               }}
             />
 
-            <div className="hidden h-8 w-px shrink-0 bg-white/10 sm:block" />
+            <button
+              type="button"
+              onClick={() =>
+                setSpeakerMuted((current) => !current)
+              }
+              title={
+                speakerMuted
+                  ? "Bật âm thanh loa"
+                  : "Tắt âm thanh loa"
+              }
+              aria-label={
+                speakerMuted
+                  ? "Bật âm thanh loa"
+                  : "Tắt âm thanh loa"
+              }
+              aria-pressed={speakerMuted}
+              className={`flex h-11 min-w-11 shrink-0 items-center justify-center rounded-xl border px-3 text-sm font-semibold text-white transition ${
+                speakerMuted
+                  ? "border-red-400/40 bg-red-500/20 hover:bg-red-500/30"
+                  : "border-white/10 bg-white/10 hover:bg-white/15"
+              }`}
+            >
+              <span className="text-base">
+                {speakerMuted ? "🔇" : "🔊"}
+              </span>
+              <span className="ml-2 hidden sm:inline">
+                {speakerMuted ? "Bật loa" : "Tắt loa"}
+              </span>
+            </button>
 
-            <div className="flex flex-wrap items-center justify-center gap-1">
-              <MediaDeviceMenu kind="audioinput">
-                🎙 Chọn mic
-              </MediaDeviceMenu>
-
-              <MediaDeviceMenu kind="audiooutput">
-                🔊 Chọn loa
-              </MediaDeviceMenu>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setSpeakerMuted((current) => !current)
-                }
-                title={
-                  speakerMuted
-                    ? "Bật âm thanh cuộc gọi"
-                    : "Tắt âm thanh cuộc gọi"
-                }
-                aria-pressed={speakerMuted}
-                className={`h-11 shrink-0 rounded-xl border px-3 text-sm font-semibold text-white ${
-                  speakerMuted
-                    ? "border-red-400/40 bg-red-500/20 hover:bg-red-500/30"
-                    : "border-white/10 bg-white/10 hover:bg-white/15"
-                }`}
-              >
-                {speakerMuted
-                  ? "🔇 Bật loa"
-                  : "🔊 Tắt loa"}
-              </button>
-
-              {callType === "video" && (
-                <MediaDeviceMenu kind="videoinput">
-                  📷 Chọn camera
-                </MediaDeviceMenu>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowDeviceSettings(true)}
+              title="Cài đặt thiết bị"
+              aria-label="Mở cài đặt thiết bị"
+              className="flex h-11 min-w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/10 px-3 text-sm font-semibold text-white transition hover:bg-white/15"
+            >
+              <span className="text-base">⚙️</span>
+              <span className="ml-2 hidden sm:inline">
+                Cài đặt
+              </span>
+            </button>
 
             <div className="hidden h-8 w-px shrink-0 bg-white/10 sm:block" />
 
@@ -225,16 +249,95 @@ function CompactCallStage({
               type="button"
               onClick={onEnd}
               disabled={ending}
-              className="h-11 shrink-0 rounded-xl bg-red-600 px-4 text-sm font-bold text-white shadow-lg hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60 sm:px-5"
+              className="h-11 shrink-0 rounded-xl bg-red-600 px-4 text-sm font-bold text-white shadow-lg transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60 sm:px-5"
             >
               {ending ? "Đang kết thúc..." : "📵 Kết thúc"}
             </button>
           </div>
 
           <p className="mt-1 text-center text-[11px] text-gray-500">
-            Chọn mic, loa, camera hoặc tắt tiếng loa ngay trong cuộc gọi.
+            Mic, loa, camera và chia sẻ màn hình ở ngoài; chọn thiết bị trong Cài đặt.
           </p>
         </footer>
+
+        {showDeviceSettings && (
+          <div
+            className="fixed inset-0 z-[250] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Cài đặt thiết bị cuộc gọi"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                setShowDeviceSettings(false);
+              }
+            }}
+          >
+            <section className="w-full max-w-md overflow-visible rounded-2xl border border-white/10 bg-[#1b1c21] p-5 text-white shadow-2xl [&_.lk-button]:!flex [&_.lk-button]:!h-12 [&_.lk-button]:!w-full [&_.lk-button]:!items-center [&_.lk-button]:!justify-between [&_.lk-button]:!rounded-xl [&_.lk-button]:!border-white/10 [&_.lk-button]:!bg-white/10 [&_.lk-button]:!px-4 [&_.lk-button]:!text-left [&_.lk-button]:!text-white [&_.lk-button:hover]:!bg-white/15 [&_.lk-device-menu]:!z-[400] [&_.lk-device-menu]:!max-h-[45vh] [&_.lk-device-menu]:!overflow-y-auto">
+              <header className="mb-5 flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold">
+                    Cài đặt thiết bị
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-400">
+                    Chọn mic, loa và camera dùng trong cuộc gọi.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowDeviceSettings(false)
+                  }
+                  aria-label="Đóng cài đặt"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10 text-lg text-gray-300 hover:bg-white/15 hover:text-white"
+                >
+                  ×
+                </button>
+              </header>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-gray-400">
+                    Microphone
+                  </label>
+                  <MediaDeviceMenu kind="audioinput">
+                    🎙 Chọn microphone
+                  </MediaDeviceMenu>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-gray-400">
+                    Loa
+                  </label>
+                  <MediaDeviceMenu kind="audiooutput">
+                    🔊 Chọn loa
+                  </MediaDeviceMenu>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-gray-400">
+                    Camera
+                  </label>
+                  <MediaDeviceMenu kind="videoinput">
+                    📷 Chọn camera
+                  </MediaDeviceMenu>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-xl bg-black/20 px-3 py-3 text-xs leading-5 text-gray-400">
+                Trình duyệt cần được cấp quyền micro và camera để hiển thị đầy đủ tên thiết bị.
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowDeviceSettings(false)}
+                className="mt-5 h-11 w-full rounded-xl bg-indigo-500 font-bold text-white hover:bg-indigo-400"
+              >
+                Xong
+              </button>
+            </section>
+          </div>
+        )}
 
         {errorMessage && (
           <div className="fixed bottom-24 left-1/2 z-[100] w-[min(90vw,520px)] -translate-x-1/2 rounded-xl bg-red-500/95 px-4 py-3 text-center text-sm text-white shadow-2xl">
