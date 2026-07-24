@@ -3,10 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import {
-  AudioConference,
+  ControlBar,
+  GridLayout,
   LiveKitRoom,
-  VideoConference,
+  ParticipantTile,
+  RoomAudioRenderer,
+  useTracks,
 } from "@livekit/components-react";
+import { Track } from "livekit-client";
 import { createClient } from "@/utils/supabase/client";
 
 const supabase = createClient();
@@ -39,6 +43,162 @@ type ConnectionDetails = {
   server_url: string;
   participant_token: string;
 };
+
+type CompactCallStageProps = {
+  callType: "audio" | "video";
+  answeredAt: string | null;
+  otherProfile: ProfileRow | null;
+  ending: boolean;
+  errorMessage: string;
+  onEnd: () => void;
+};
+
+function CallTimer({
+  answeredAt,
+}: {
+  answeredAt: string | null;
+}) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const startedAt = answeredAt
+    ? new Date(answeredAt).getTime()
+    : now;
+  const totalSeconds = Math.max(
+    0,
+    Math.floor((now - startedAt) / 1000),
+  );
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(
+    (totalSeconds % 3600) / 60,
+  );
+  const seconds = totalSeconds % 60;
+
+  return (
+    <span className="font-mono text-xs tabular-nums text-gray-400">
+      {hours > 0
+        ? `${String(hours).padStart(2, "0")}:`
+        : ""}
+      {String(minutes).padStart(2, "0")}:
+      {String(seconds).padStart(2, "0")}
+    </span>
+  );
+}
+
+function CompactCallStage({
+  callType,
+  answeredAt,
+  otherProfile,
+  ending,
+  errorMessage,
+  onEnd,
+}: CompactCallStageProps) {
+  const tracks = useTracks([
+    {
+      source: Track.Source.Camera,
+      withPlaceholder: true,
+    },
+    {
+      source: Track.Source.ScreenShare,
+      withPlaceholder: false,
+    },
+  ]);
+
+  return (
+    <div className="min-h-screen overflow-hidden bg-[#0d0e11] p-2 text-white sm:p-4">
+      <div className="mx-auto flex h-[calc(100vh-16px)] w-full max-w-[1240px] flex-col gap-3 sm:h-[calc(100vh-32px)]">
+        <header className="flex h-14 shrink-0 items-center gap-3 rounded-2xl border border-white/10 bg-[#18191d] px-4 shadow-lg">
+          {otherProfile?.avatar_url ? (
+            <img
+              src={otherProfile.avatar_url}
+              alt={otherProfile.username}
+              className="h-9 w-9 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold">
+              {(otherProfile?.username ?? "T")
+                .charAt(0)
+                .toUpperCase()}
+            </div>
+          )}
+
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-bold sm:text-base">
+              {otherProfile?.username ?? "Cuộc gọi"}
+            </h1>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400">
+                {callType === "video"
+                  ? "Cuộc gọi video"
+                  : "Cuộc gọi thoại"}
+              </span>
+              <span className="h-1 w-1 rounded-full bg-green-400" />
+              <CallTimer answeredAt={answeredAt} />
+            </div>
+          </div>
+
+          <div className="hidden items-center gap-2 text-xs text-gray-400 sm:flex">
+            <span className="h-2 w-2 rounded-full bg-green-400" />
+            Đã kết nối
+          </div>
+        </header>
+
+        <section className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/10 bg-[#15161a] p-2 shadow-2xl sm:p-3">
+          <GridLayout
+            tracks={tracks}
+            className="h-full w-full gap-2 sm:gap-3"
+          >
+            <ParticipantTile className="overflow-hidden rounded-xl border border-white/10 bg-[#202126] shadow-lg" />
+          </GridLayout>
+        </section>
+
+        <footer className="shrink-0">
+          <div className="mx-auto flex w-fit max-w-full items-center gap-2 overflow-x-auto rounded-2xl border border-white/10 bg-[#1b1c21]/95 p-2 shadow-2xl backdrop-blur [&_.lk-button]:!h-11 [&_.lk-button]:!min-w-11 [&_.lk-button]:!rounded-xl [&_.lk-button]:!border-white/10 [&_.lk-button]:!bg-white/10 [&_.lk-button]:!px-3 [&_.lk-button]:!text-white [&_.lk-button:hover]:!bg-white/15 [&_.lk-control-bar]:!gap-1 [&_.lk-control-bar]:!border-0 [&_.lk-control-bar]:!bg-transparent [&_.lk-control-bar]:!p-0">
+            <ControlBar
+              variation="minimal"
+              saveUserChoices
+              controls={{
+                microphone: true,
+                camera: callType === "video",
+                screenShare: callType === "video",
+                chat: false,
+                leave: false,
+              }}
+            />
+
+            <div className="h-8 w-px shrink-0 bg-white/10" />
+
+            <button
+              type="button"
+              onClick={onEnd}
+              disabled={ending}
+              className="h-11 shrink-0 rounded-xl bg-red-600 px-4 text-sm font-bold text-white shadow-lg hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60 sm:px-5"
+            >
+              {ending ? "Đang kết thúc..." : "📵 Kết thúc"}
+            </button>
+          </div>
+        </footer>
+
+        {errorMessage && (
+          <div className="fixed bottom-24 left-1/2 z-[100] w-[min(90vw,520px)] -translate-x-1/2 rounded-xl bg-red-500/95 px-4 py-3 text-center text-sm text-white shadow-2xl">
+            {errorMessage}
+          </div>
+        )}
+
+        <RoomAudioRenderer />
+      </div>
+    </div>
+  );
+}
 
 export default function CallPage() {
   const params = useParams();
@@ -478,7 +638,7 @@ export default function CallPage() {
   }
 
   return (
-    <main className="h-screen overflow-hidden bg-black">
+    <main className="h-screen overflow-hidden bg-[#0d0e11]">
       <LiveKitRoom
         serverUrl={connection.server_url}
         token={connection.participant_token}
@@ -489,39 +649,14 @@ export default function CallPage() {
         data-lk-theme="default"
         style={{ height: "100vh" }}
       >
-        <div className="absolute left-4 top-4 z-50 rounded-lg bg-black/60 px-4 py-2 text-white backdrop-blur">
-          <div className="font-bold">
-            {otherProfile?.username ?? "Cuộc gọi"}
-          </div>
-          <div className="text-xs text-gray-300">
-            {call.call_type === "video"
-              ? "Gọi video"
-              : "Gọi thoại"}
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => void finishCall()}
-          disabled={ending}
-          className="fixed bottom-6 left-1/2 z-[100] -translate-x-1/2 rounded-full bg-red-600 px-7 py-3 font-bold text-white shadow-2xl hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {ending
-            ? "Đang kết thúc..."
-            : "📵 Kết thúc cuộc gọi"}
-        </button>
-
-        {errorMessage && (
-          <div className="fixed bottom-24 left-1/2 z-[100] w-[min(90vw,520px)] -translate-x-1/2 rounded-lg bg-red-500/90 px-4 py-3 text-center text-sm text-white shadow-xl">
-            {errorMessage}
-          </div>
-        )}
-
-        {call.call_type === "video" ? (
-          <VideoConference />
-        ) : (
-          <AudioConference />
-        )}
+        <CompactCallStage
+          callType={call.call_type}
+          answeredAt={call.answered_at}
+          otherProfile={otherProfile}
+          ending={ending}
+          errorMessage={errorMessage}
+          onEnd={() => void finishCall()}
+        />
       </LiveKitRoom>
     </main>
   );
