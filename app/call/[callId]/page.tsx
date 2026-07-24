@@ -373,6 +373,13 @@ export default function CallPage() {
     useState("");
 
   const endingRef = useRef(false);
+  const activeCallRef =
+    useRef<CallSessionRow | null>(null);
+  const accessTokenRef = useRef("");
+
+  useEffect(() => {
+    activeCallRef.current = call;
+  }, [call]);
 
   const isCaller =
     Boolean(call) &&
@@ -403,6 +410,15 @@ export default function CallPage() {
         window.location.href = "/login";
         return;
       }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      accessTokenRef.current =
+        session?.access_token ?? "";
+
+      await supabase.rpc("cleanup_stale_calls");
 
       if (!active) return;
 
@@ -475,6 +491,106 @@ export default function CallPage() {
       }
     };
   }, [callId]);
+
+  useEffect(() => {
+    if (
+      !call ||
+      !currentUserId ||
+      !["ringing", "accepted"].includes(call.status)
+    ) {
+      return;
+    }
+
+    const heartbeatCallId = call.id;
+    let active = true;
+
+    async function sendHeartbeat() {
+      const { data, error } = await supabase.rpc(
+        "heartbeat_private_call",
+        {
+          p_call_id: heartbeatCallId,
+        },
+      );
+
+      if (!active || error || !data) return;
+
+      const updatedCall = (
+        Array.isArray(data) ? data[0] : data
+      ) as CallSessionRow | null;
+
+      if (updatedCall) {
+        setCall(updatedCall);
+      }
+    }
+
+    void sendHeartbeat();
+
+    const timer = window.setInterval(() => {
+      void sendHeartbeat();
+    }, 20_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [call?.id, call?.status, currentUserId]);
+
+  useEffect(() => {
+    function endCallWhenLeaving() {
+      const activeCall = activeCallRef.current;
+
+      if (
+        !activeCall ||
+        !["ringing", "accepted"].includes(
+          activeCall.status,
+        ) ||
+        endingRef.current
+      ) {
+        return;
+      }
+
+      const accessToken = accessTokenRef.current;
+
+      if (!accessToken) return;
+
+      endingRef.current = true;
+
+      void fetch("/api/end-call", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          call_id: activeCall.id,
+        }),
+        keepalive: true,
+      }).catch(() => {
+        // Heartbeat + cleanup_stale_calls sẽ xử lý nếu
+        // trình duyệt đóng trước khi request hoàn tất.
+      });
+    }
+
+    window.addEventListener(
+      "pagehide",
+      endCallWhenLeaving,
+    );
+    window.addEventListener(
+      "beforeunload",
+      endCallWhenLeaving,
+    );
+
+    return () => {
+      window.removeEventListener(
+        "pagehide",
+        endCallWhenLeaving,
+      );
+      window.removeEventListener(
+        "beforeunload",
+        endCallWhenLeaving,
+      );
+    };
+  }, []);
 
   useEffect(() => {
     if (
