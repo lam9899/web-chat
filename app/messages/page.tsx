@@ -898,6 +898,7 @@ export default function MessagesPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({
       behavior: "smooth",
+      block: "end",
     });
   }, [callHistory.length, messages.length]);
 
@@ -1316,10 +1317,10 @@ export default function MessagesPage() {
       </aside>
 
       {/* Nội dung cuộc trò chuyện */}
-      <section className="flex min-w-0 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
         {selectedProfile ? (
           <>
-            <header className="flex h-[64px] items-center gap-3 border-b border-black/20 px-4 shadow">
+            <header className="flex h-[64px] shrink-0 items-center gap-3 border-b border-black/20 px-4 shadow">
               <button
                 type="button"
                 onClick={() => setShowContacts(true)}
@@ -1417,7 +1418,7 @@ export default function MessagesPage() {
               </div>
             </header>
 
-            <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 [scrollbar-gutter:stable] md:px-6">
               {errorMessage && (
                 <div className="mb-4 rounded-md bg-red-500/15 px-4 py-3 text-sm text-red-300">
                   {errorMessage}
@@ -1728,7 +1729,7 @@ export default function MessagesPage() {
 
             <form
               onSubmit={sendMessage}
-              className="p-3 md:p-4"
+              className="shrink-0 border-t border-black/20 bg-[#313338] p-3 md:p-4"
             >
               <div className="flex rounded-lg bg-[#383a40] px-4">
                 <input
