@@ -58,6 +58,14 @@ type OnlineUser = {
   last_seen_at?: string | null;
 };
 
+type GlobalPresenceWindow = Window &
+  typeof globalThis & {
+    __talkGlobalPresence?: OnlineUser[];
+  };
+
+const GLOBAL_PRESENCE_EVENT =
+  "talk-global-presence-sync";
+
 type ChannelItem = {
   id: string;
   label: string;
@@ -395,6 +403,81 @@ export default function Home() {
     friendIdsRef.current = friendIds;
   }, [friendIds]);
 
+  useEffect(() => {
+    function applyPresence(members: OnlineUser[]) {
+      const allowedIds = new Set(
+        [userId, ...friendIds].filter(Boolean),
+      );
+
+      const visibleMembers = members
+        .filter(
+          (member) =>
+            member.user_id &&
+            allowedIds.has(member.user_id),
+        )
+        .map((member) => {
+          const card = memberCards[member.user_id];
+
+          return {
+            ...member,
+            username: card?.username ?? member.username,
+            avatar_url:
+              card?.avatar_url ?? member.avatar_url,
+            public_id:
+              card?.public_id ?? member.public_id ?? 0,
+            role: card?.role ?? member.role ?? "member",
+            last_seen_at:
+              card?.last_seen_at ??
+              member.last_seen_at ??
+              null,
+          } as OnlineUser;
+        });
+
+      const uniqueMembers = Array.from(
+        new Map(
+          visibleMembers.map((member) => [
+            member.user_id,
+            member,
+          ]),
+        ).values(),
+      ).sort((firstMember, secondMember) =>
+        firstMember.username.localeCompare(
+          secondMember.username,
+          "vi",
+        ),
+      );
+
+      setOnlineUsers(uniqueMembers);
+    }
+
+    const browserWindow =
+      window as GlobalPresenceWindow;
+
+    applyPresence(
+      browserWindow.__talkGlobalPresence ?? [],
+    );
+
+    function handlePresence(event: Event) {
+      applyPresence(
+        (
+          event as CustomEvent<OnlineUser[]>
+        ).detail ?? [],
+      );
+    }
+
+    window.addEventListener(
+      GLOBAL_PRESENCE_EVENT,
+      handlePresence,
+    );
+
+    return () => {
+      window.removeEventListener(
+        GLOBAL_PRESENCE_EVENT,
+        handlePresence,
+      );
+    };
+  }, [friendIds, memberCards, userId]);
+
   async function loadMemberCards(ids: string[]) {
     const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
     if (uniqueIds.length === 0) return;
@@ -613,13 +696,9 @@ export default function Home() {
         setSuspension(suspensionData ?? null);
       }
 
-      const onlineChannel = supabase.channel("online-users-global", {
-        config: {
-          presence: {
-            key: user.id,
-          },
-        },
-      });
+      const onlineChannel = supabase.channel(
+        `home-data-${authenticatedUserId}`,
+      );
 
       onlineChannel.on(
         "postgres_changes",
@@ -808,65 +887,9 @@ export default function Home() {
         },
       );
 
-      onlineChannel.on("presence", { event: "sync" }, () => {
-        const presenceState = onlineChannel.presenceState();
-
-        const allowedIds = new Set([
-          authenticatedUserId,
-          ...friendIdsRef.current,
-        ]);
-
-        const users = Object.values(presenceState)
-          .flat()
-          .map((presence) => presence as unknown as OnlineUser)
-          .filter(
-            (member) =>
-              member.user_id && allowedIds.has(member.user_id),
-          )
-          .map((member) => {
-            const card = memberCardsRef.current[member.user_id];
-            return {
-              ...member,
-              username: card?.username ?? member.username,
-              avatar_url:
-                card?.avatar_url ?? member.avatar_url,
-              public_id: card?.public_id ?? member.public_id ?? 0,
-              role: card?.role ?? member.role ?? "member",
-              last_seen_at:
-                card?.last_seen_at ?? member.last_seen_at ?? null,
-            } as OnlineUser;
-          });
-
-        const uniqueUsers = Array.from(
-          new Map(
-            users.map((member) => [member.user_id, member]),
-          ).values(),
-        ).sort((firstUser, secondUser) =>
-          firstUser.username.localeCompare(
-            secondUser.username,
-            "vi",
-          ),
-        );
-
-        if (isActive) {
-          setOnlineUsers(uniqueUsers);
-        }
-      });
-
       presenceChannelRef.current = onlineChannel;
 
-      onlineChannel.subscribe(async (status) => {
-        if (status === "SUBSCRIBED") {
-          await onlineChannel.track({
-            user_id: user.id,
-            username: displayName,
-            avatar_url: currentAvatar,
-            public_id: currentPublicId,
-            role: currentRole,
-            online_at: new Date().toISOString(),
-          });
-        }
-      });
+      onlineChannel.subscribe();
 
       setAuthLoading(false);
     }

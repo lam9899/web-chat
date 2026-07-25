@@ -49,6 +49,23 @@ type GlobalPresenceRole = {
   role: "admin" | "moderator" | "member";
 };
 
+type GlobalPresenceMember = {
+  user_id: string;
+  username: string;
+  avatar_url?: string;
+  public_id: number;
+  role: "admin" | "moderator" | "member";
+  online_at: string;
+};
+
+type GlobalPresenceWindow = Window &
+  typeof globalThis & {
+    __talkGlobalPresence?: GlobalPresenceMember[];
+  };
+
+const GLOBAL_PRESENCE_EVENT =
+  "talk-global-presence-sync";
+
 export default function CallProvider({
   children,
 }: {
@@ -129,6 +146,50 @@ export default function CallProvider({
         },
       );
 
+      function publishGlobalPresence() {
+        if (!presenceChannel || !active) return;
+
+        const members = Object.values(
+          presenceChannel.presenceState(),
+        )
+          .flat()
+          .map(
+            (presence) =>
+              presence as unknown as GlobalPresenceMember,
+          )
+          .filter((member) => Boolean(member.user_id));
+
+        const uniqueMembers = Array.from(
+          new Map(
+            members.map((member) => [
+              member.user_id,
+              member,
+            ]),
+          ).values(),
+        );
+
+        const browserWindow =
+          window as GlobalPresenceWindow;
+
+        browserWindow.__talkGlobalPresence =
+          uniqueMembers;
+
+        browserWindow.dispatchEvent(
+          new CustomEvent<GlobalPresenceMember[]>(
+            GLOBAL_PRESENCE_EVENT,
+            {
+              detail: uniqueMembers,
+            },
+          ),
+        );
+      }
+
+      presenceChannel.on(
+        "presence",
+        { event: "sync" },
+        publishGlobalPresence,
+      );
+
       presenceChannel.subscribe(async (status) => {
         if (status !== "SUBSCRIBED" || !presenceChannel) {
           return;
@@ -142,6 +203,8 @@ export default function CallProvider({
           role: role?.role ?? "member",
           online_at: new Date().toISOString(),
         });
+
+        publishGlobalPresence();
       });
 
       heartbeatTimer = window.setInterval(() => {

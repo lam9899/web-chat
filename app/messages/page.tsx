@@ -27,6 +27,18 @@ type ProfileRow = {
   last_seen_at: string | null;
 };
 
+type GlobalPresenceMember = {
+  user_id: string;
+};
+
+type GlobalPresenceWindow = Window &
+  typeof globalThis & {
+    __talkGlobalPresence?: GlobalPresenceMember[];
+  };
+
+const GLOBAL_PRESENCE_EVENT =
+  "talk-global-presence-sync";
+
 type DirectMessageRow = {
   id: number;
   sender_id: string;
@@ -529,6 +541,49 @@ export default function MessagesPage() {
   }, [profiles]);
 
   useEffect(() => {
+    function applyPresence(
+      members: GlobalPresenceMember[],
+    ) {
+      setOnlineFriendIds(
+        new Set(
+          members
+            .map((member) => member.user_id)
+            .filter(Boolean),
+        ),
+      );
+    }
+
+    const browserWindow =
+      window as GlobalPresenceWindow;
+
+    applyPresence(
+      browserWindow.__talkGlobalPresence ?? [],
+    );
+
+    function handlePresence(event: Event) {
+      applyPresence(
+        (
+          event as CustomEvent<
+            GlobalPresenceMember[]
+          >
+        ).detail ?? [],
+      );
+    }
+
+    window.addEventListener(
+      GLOBAL_PRESENCE_EVENT,
+      handlePresence,
+    );
+
+    return () => {
+      window.removeEventListener(
+        GLOBAL_PRESENCE_EVENT,
+        handlePresence,
+      );
+    };
+  }, []);
+
+  useEffect(() => {
     privateChatPreferencesRef.current =
       privateChatPreferences;
   }, [privateChatPreferences]);
@@ -774,9 +829,6 @@ export default function MessagesPage() {
   useEffect(() => {
     let active = true;
     let realtimeChannel:
-      | ReturnType<typeof supabase.channel>
-      | null = null;
-    let presenceChannel:
       | ReturnType<typeof supabase.channel>
       | null = null;
 
@@ -1295,39 +1347,6 @@ export default function MessagesPage() {
         )
         .subscribe();
 
-      presenceChannel = supabase.channel(
-        "online-users-global",
-      );
-
-      presenceChannel.on(
-        "presence",
-        { event: "sync" },
-        () => {
-          if (!active || !presenceChannel) return;
-
-          const onlineIds = new Set(
-            Object.values(
-              presenceChannel.presenceState(),
-            )
-              .flat()
-              .map((presence) =>
-                String(
-                  (
-                    presence as unknown as {
-                      user_id?: string;
-                    }
-                  ).user_id ?? "",
-                ),
-              )
-              .filter(Boolean),
-          );
-
-          setOnlineFriendIds(onlineIds);
-        },
-      );
-
-      presenceChannel.subscribe();
-
       setLoading(false);
     }
 
@@ -1340,9 +1359,6 @@ export default function MessagesPage() {
         void supabase.removeChannel(realtimeChannel);
       }
 
-      if (presenceChannel) {
-        void supabase.removeChannel(presenceChannel);
-      }
     };
   }, []);
 
