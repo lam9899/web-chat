@@ -5,6 +5,7 @@ import CallProvider from "./call-provider";
 import "@livekit/components-styles";
 import "./globals.css";
 
+import PushNotificationProvider from "./push-notification-provider";
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -48,8 +49,10 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
+        <PushNotificationProvider>
         <CallProvider>{children}</CallProvider>
         <PwaRegister />
+              </PushNotificationProvider>
       </body>
     </html>
   );

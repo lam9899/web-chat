@@ -10,6 +10,7 @@ import {
 } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { getNotificationsEnabled } from "@/utils/notifications";
+import { sendPushToUser } from "@/utils/push-notifications";
 import FriendManager from "./friend-manager";
 import MemberBadge, {
   formatPublicId,
@@ -2339,6 +2340,25 @@ export default function MessagesPage() {
           attachmentFile?.size ?? null,
       });
 
+    // PUSH_NOTIFY_PRIVATE_MESSAGE
+    if (!error) {
+      const notificationBody =
+        content ||
+        (attachmentFile?.type.startsWith("audio/")
+          ? "🎤 Đã gửi một tin nhắn thoại"
+          : attachmentFile?.type.startsWith("image/")
+            ? "🖼️ Đã gửi một ảnh"
+            : attachmentFile
+              ? "📎 Đã gửi một tệp"
+              : "Bạn có một tin nhắn mới");
+
+      void sendPushToUser({
+        targetUserId: selectedProfile.id,
+        type: "private_message",
+        body: notificationBody,
+      });
+    }
+
     if (error) {
       if (uploadedPath) {
         await supabase.storage
@@ -2412,6 +2432,14 @@ export default function MessagesPage() {
       setStartingCallType(null);
       return;
     }
+
+    // PUSH_NOTIFY_INCOMING_CALL
+    void sendPushToUser({
+      targetUserId: selectedProfile.id,
+      type: "incoming_call",
+      callId: createdCall.id,
+      callType,
+    });
 
     window.location.href = `/call/${createdCall.id}`;
   }
