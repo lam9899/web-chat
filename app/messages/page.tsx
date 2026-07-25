@@ -1964,8 +1964,28 @@ export default function MessagesPage() {
   }
 
   return (
-    <main className="grid h-screen overflow-hidden bg-[#313338] text-white md:grid-cols-[280px_minmax(0,1fr)]">
-      {/* Danh sách thành viên */}
+    <main className="grid h-screen overflow-hidden bg-[#313338] text-white md:grid-cols-[84px_320px_minmax(0,1fr)]">
+      {/* Điều hướng ngoài cùng bên trái */}
+      <nav className="hidden min-h-0 flex-col items-center border-r border-black/20 bg-[#1e1f22] px-2 py-3 md:flex">
+        <button
+          type="button"
+          onClick={() => {
+            window.location.href = "/";
+          }}
+          title="Mở Kênh chung"
+          aria-label="Mở Kênh chung"
+          className="group flex w-full flex-col items-center gap-1.5 rounded-2xl px-1 py-3 text-center text-gray-300 transition hover:bg-indigo-500 hover:text-white"
+        >
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#313338] text-2xl font-black transition group-hover:rounded-xl group-hover:bg-white/15">
+            #
+          </span>
+          <span className="text-[11px] font-bold leading-tight">
+            Kênh chung
+          </span>
+        </button>
+      </nav>
+
+      {/* Danh sách bạn bè */}
       <aside
         className={`fixed inset-0 z-30 flex min-h-0 flex-col bg-[#2b2d31] transition-transform md:static md:translate-x-0 ${
           showContacts
@@ -1973,40 +1993,36 @@ export default function MessagesPage() {
             : "-translate-x-full"
         }`}
       >
-        <header className="border-b border-black/20 p-4">
-          <div className="flex items-center justify-between">
+        <header className="shrink-0 border-b border-black/20 p-4">
+          <div className="flex items-start justify-between gap-3">
             <div>
-              <h1 className="flex items-center gap-2 text-xl font-bold">
-                <span>Tin nhắn riêng</span>
+            <h1 className="flex items-center gap-2 text-xl font-bold">
+              <span>Tin nhắn riêng</span>
 
-                {totalUnread > 0 && (
-                  <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs">
-                    {totalUnread > 99 ? "99+" : totalUnread}
-                  </span>
-                )}
-              </h1>
-              <p className="text-xs text-gray-400">
-                Trò chuyện riêng tư với thành viên
-              </p>
+              {totalUnread > 0 && (
+                <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs">
+                  {totalUnread > 99 ? "99+" : totalUnread}
+                </span>
+              )}
+            </h1>
+
+            <p className="text-xs text-gray-400">
+              Trò chuyện riêng tư với bạn bè
+            </p>
             </div>
 
-            <div className="flex items-center gap-2">
-              <FriendManager
-                onFriendsChanged={() => {
-                  window.location.reload();
-                }}
-              />
-
-              <button
-                type="button"
-                onClick={() => {
-                  window.location.href = "/";
-                }}
-                className="rounded bg-white/10 px-3 py-2 text-sm font-semibold hover:bg-white/15"
-              >
-                Chat chung
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = "/";
+              }}
+              title="Kênh chung"
+              aria-label="Kênh chung"
+              className="flex h-10 shrink-0 items-center gap-2 rounded-xl bg-white/10 px-3 text-sm font-bold hover:bg-white/15 md:hidden"
+            >
+              <span className="text-lg">#</span>
+              <span>Kênh chung</span>
+            </button>
           </div>
 
           <input
@@ -2015,14 +2031,24 @@ export default function MessagesPage() {
               setSearchQuery(event.target.value)
             }
             placeholder="Tìm trong bạn bè..."
-            className="mt-4 w-full rounded-md bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
+            className="mt-4 w-full rounded-xl border border-white/5 bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
           />
+
+          <div className="mt-3 w-full">
+            <FriendManager
+              triggerVariant="sidebar"
+              initialTab="add"
+              onFriendsChanged={() => {
+                window.location.reload();
+              }}
+            />
+          </div>
         </header>
 
         <div className="flex-1 overflow-y-auto p-2">
           {filteredProfiles.length === 0 ? (
             <p className="p-4 text-sm text-gray-400">
-              Chưa có bạn bè. Bấm biểu tượng 👥 để kết bạn.
+              Chưa có bạn bè. Bấm nút Thêm bạn bè ở phía trên để kết bạn.
             </p>
           ) : (
             filteredProfiles.map((profile) => {
@@ -2039,7 +2065,7 @@ export default function MessagesPage() {
                   key={profile.id}
                   type="button"
                   onClick={() => selectMember(profile)}
-                  className={`mb-1 flex w-full items-center gap-3 rounded-md p-3 text-left transition ${
+                  className={`mb-1.5 flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left transition ${
                     isSelected
                       ? "bg-white/10"
                       : "hover:bg-white/5"
