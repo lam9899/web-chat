@@ -15,6 +15,7 @@ import MemberBadge, {
   type MemberRole,
 } from "@/components/member-badge";
 import FriendManager from "./messages/friend-manager";
+import ChannelRail from "./channel-rail";
 
 const supabase = createClient();
 
@@ -2377,26 +2378,10 @@ export default function Home() {
           className="fixed inset-0 z-30 bg-black/50 lg:hidden"
         />
       )}
+      {/* Kênh động ngoài cùng bên trái */}
+      <ChannelRail />
 
-      {/* Máy chủ */}
-      <aside className="hidden flex-col items-center gap-3 bg-[#1e1f22] py-3 md:flex">
-        <button className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500 text-xl font-bold">
-          T
-        </button>
-
-        <div className="h-px w-8 bg-white/10" />
-
-        {["G", "H", "K", "+"].map((server) => (
-          <button
-            key={server}
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-[#313338] text-lg font-semibold transition hover:rounded-xl hover:bg-indigo-500"
-          >
-            {server}
-          </button>
-        ))}
-      </aside>
-
-      {/* Kênh */}
+{/* Kênh */}
       <aside
         className={`fixed inset-y-0 left-0 z-40 flex w-[280px] min-h-0 flex-col bg-[#2b2d31] transition-transform md:static md:w-auto md:translate-x-0 ${
           showChannels ? "translate-x-0" : "-translate-x-full"

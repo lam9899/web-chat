@@ -12,6 +12,7 @@ import { createClient } from "@/utils/supabase/client";
 import { getNotificationsEnabled } from "@/utils/notifications";
 import { sendPushToUser } from "@/utils/push-notifications";
 import FriendManager from "./friend-manager";
+import ChannelRail from "../channel-rail";
 import MemberBadge, {
   formatPublicId,
   type MemberRole,
@@ -3030,27 +3031,10 @@ export default function MessagesPage() {
 
   return (
     <main className="grid h-screen overflow-hidden bg-[#313338] text-white md:grid-cols-[84px_320px_minmax(0,1fr)]">
-      {/* Điều hướng ngoài cùng bên trái */}
-      <nav className="hidden min-h-0 flex-col items-center border-r border-black/20 bg-[#1e1f22] px-2 py-3 md:flex">
-        <button
-          type="button"
-          onClick={() => {
-            window.location.href = "/";
-          }}
-          title="Mở Kênh chung"
-          aria-label="Mở Kênh chung"
-          className="group flex w-full flex-col items-center gap-1.5 rounded-2xl px-1 py-3 text-center text-gray-300 transition hover:bg-indigo-500 hover:text-white"
-        >
-          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#313338] text-2xl font-black transition group-hover:rounded-xl group-hover:bg-white/15">
-            #
-          </span>
-          <span className="text-[11px] font-bold leading-tight">
-            Kênh chung
-          </span>
-        </button>
-      </nav>
+      {/* Kênh động ngoài cùng bên trái */}
+      <ChannelRail />
 
-      {/* Danh sách bạn bè */}
+{/* Danh sách bạn bè */}
       <aside
         className={`fixed inset-0 z-30 flex min-h-0 flex-col bg-[#2b2d31] transition-transform md:static md:translate-x-0 ${
           showContacts
