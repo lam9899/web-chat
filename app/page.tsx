@@ -1956,8 +1956,8 @@ export default function Home() {
       </aside>
 
       {/* Chat */}
-      <section className="flex min-w-0 flex-col">
-        <header className="flex h-[57px] items-center gap-3 border-b border-black/20 px-3 shadow md:px-4">
+      <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+        <header className="flex h-[57px] shrink-0 items-center gap-3 border-b border-black/20 px-3 shadow md:px-4">
           <button
             type="button"
             onClick={() => setShowChannels(true)}
@@ -1989,7 +1989,7 @@ export default function Home() {
           </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-3 py-5 md:px-5">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-5 [scrollbar-gutter:stable] md:px-5">
           <div className="mb-8">
             <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-[#41434a] text-4xl">
               #
@@ -2167,7 +2167,7 @@ export default function Home() {
                                   message.attachment_name ??
                                   "Ảnh đính kèm"
                                 }
-                                className="max-h-80 rounded-lg object-contain"
+                                className="max-h-80 max-w-full rounded-lg object-contain"
                               />
                             </a>
                           )}
@@ -2397,7 +2397,7 @@ export default function Home() {
           )}
         </div>
 
-        <div className="px-3 pb-2 md:px-4">
+        <div className="shrink-0 px-3 pb-2 md:px-4">
           {typingUsers.length > 0 && (
             <p className="mb-1 text-xs text-gray-400">
               {typingUsers.slice(0, 2).join(", ")}
