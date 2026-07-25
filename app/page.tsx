@@ -177,28 +177,28 @@ function formatLastActive(
   lastSeenAt: string | null | undefined,
   now: number,
 ) {
-  if (!lastSeenAt) return "Chưa có hoạt động gần đây";
+  if (!lastSeenAt) return "không rõ";
 
   const lastSeenTime = new Date(lastSeenAt).getTime();
   const difference = Math.max(0, now - lastSeenTime);
   const minutes = Math.floor(difference / 60_000);
 
-  if (minutes < 1) return "Hoạt động vừa xong";
-  if (minutes < 60) return `Hoạt động ${minutes} phút trước`;
+  if (minutes < 1) return "vừa xong";
+  if (minutes < 60) return `${minutes} phút trước`;
 
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `Hoạt động ${hours} giờ trước`;
+  if (hours < 24) return `${hours} giờ trước`;
 
   const days = Math.floor(hours / 24);
-  if (days < 7) return `Hoạt động ${days} ngày trước`;
+  if (days < 7) return `${days} ngày trước`;
 
-  return `Hoạt động ${new Date(lastSeenAt).toLocaleString(
+  return new Date(lastSeenAt).toLocaleString(
     "vi-VN",
     {
       dateStyle: "short",
       timeStyle: "short",
     },
-  )}`;
+  );
 }
 
 export default function Home() {
@@ -2543,19 +2543,28 @@ export default function Home() {
               </div>
 
               <span className="min-w-0 flex-1">
-                <span className="flex min-w-0 items-center gap-2">
+                <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate font-medium">
                     {member.username}
                   </span>
+                  <span className="shrink-0 text-[10px] text-gray-500">
+                    {formatPublicId(member.public_id)}
+                  </span>
                   <MemberBadge role={member.role} />
                 </span>
-                <span className="mt-0.5 block truncate text-[11px] text-gray-500">
-                  {formatPublicId(member.public_id)} · {isOnline
-                    ? "Đang online"
-                    : formatLastActive(
+                <span
+                  className={`mt-0.5 block truncate text-[11px] ${
+                    isOnline
+                      ? "text-green-400"
+                      : "text-gray-500"
+                  }`}
+                >
+                  {isOnline
+                    ? "Online"
+                    : `Offline (${formatLastActive(
                         member.last_seen_at,
                         clock,
-                      )}
+                      )})`}
                 </span>
               </span>
 
