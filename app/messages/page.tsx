@@ -745,6 +745,8 @@ export default function MessagesPage() {
   ] = useState<number | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] =
     useState(false);
+  const [showAttachMenu, setShowAttachMenu] =
+    useState(false);
   const [selectedImageFile, setSelectedImageFile] =
     useState<File | null>(null);
   const [
@@ -2030,6 +2032,7 @@ export default function MessagesPage() {
       clearSelectedDocument();
       clearSelectedVoice();
       clearSelectedVoice();
+      setShowAttachMenu(false);
       setShowEmojiPicker(false);
       setErrorMessage("");
 
@@ -2840,13 +2843,13 @@ export default function MessagesPage() {
 
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-1.5">
+                      <MemberBadge role={profile.role} />
                       <span className="truncate font-semibold">
                         {profile.username}
                       </span>
-                      <span className="shrink-0 text-[10px] text-gray-500">
-                        {formatPublicId(profile.public_id)}
-                      </span>
-                      <MemberBadge role={profile.role} />
+                    </span>
+                    <span className="mt-0.5 block truncate text-[10px] text-gray-500">
+                      {formatPublicId(profile.public_id)}
                     </span>
                     <span
                       className={`mt-0.5 block truncate text-xs ${
@@ -2923,6 +2926,7 @@ export default function MessagesPage() {
 
               <div className="min-w-0">
                 <div className="flex min-w-0 items-center gap-1.5">
+                  <MemberBadge role={selectedProfile.role} />
                   <h2 className="truncate font-bold">
                     {selectedProfile.username}
                   </h2>
@@ -2931,7 +2935,6 @@ export default function MessagesPage() {
                       selectedProfile.public_id,
                     )}
                   </span>
-                  <MemberBadge role={selectedProfile.role} />
                 </div>
                 <p
                   className={`text-xs ${
@@ -3293,7 +3296,11 @@ export default function MessagesPage() {
                                 ) ? (
                                   <div className="min-w-[260px] rounded-xl border border-white/10 bg-black/15 p-3">
                                     <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                                      <span>🎤</span>
+                                      <img
+                                        src="/icons/voice-mic.png"
+                                        alt=""
+                                        className="h-5 w-5 rounded-full object-cover"
+                                      />
                                       <span>Tin nhắn thoại</span>
                                     </div>
                                     <audio
@@ -3523,8 +3530,12 @@ export default function MessagesPage() {
 
               {selectedVoiceFile && voicePreviewUrl && (
                 <div className="mb-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-[#2b2d31] p-3">
-                  <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-indigo-500/20 text-3xl">
-                    🎤
+                  <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-indigo-500/20">
+                    <img
+                      src="/icons/voice-mic.png"
+                      alt=""
+                      className="h-9 w-9 rounded-full object-cover"
+                    />
                   </span>
 
                   <div className="min-w-0 flex-1">
@@ -3624,7 +3635,7 @@ export default function MessagesPage() {
                 </div>
               )}
 
-              <div className="flex items-center rounded-xl bg-[#383a40] px-2">
+              <div className="flex items-center gap-1 rounded-xl bg-[#383a40] px-2">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -3641,70 +3652,80 @@ export default function MessagesPage() {
                   className="hidden"
                 />
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    fileInputRef.current?.click()
-                  }
-                  disabled={
-                    sending ||
-                    isSuspended ||
-                    isSelectedBlocked
-                  }
-                  aria-label="Chọn tệp"
-                  title="Gửi PDF, Word, Excel, PowerPoint, ZIP hoặc TXT"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  📎
-                </button>
+                <div className="relative flex shrink-0 items-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEmojiPicker(false);
+                      setShowAttachMenu(
+                        (current) => !current,
+                      );
+                    }}
+                    disabled={
+                      sending ||
+                      isSuspended ||
+                      isSelectedBlocked
+                    }
+                    aria-label="Thêm ảnh hoặc tệp"
+                    aria-expanded={showAttachMenu}
+                    title="Thêm"
+                    className="flex h-10 w-10 items-center justify-center rounded-full text-2xl font-light transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    +
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    imageInputRef.current?.click()
-                  }
-                  disabled={
-                    sending ||
-                    isSuspended ||
-                    isSelectedBlocked
-                  }
-                  aria-label="Chọn ảnh"
-                  title="Gửi ảnh"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  🖼️
-                </button>
+                  {showAttachMenu && (
+                    <div className="absolute bottom-12 left-0 z-50 w-52 overflow-hidden rounded-2xl border border-white/10 bg-[#1e1f22] p-1.5 shadow-2xl">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAttachMenu(false);
+                          imageInputRef.current?.click();
+                        }}
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition hover:bg-white/10"
+                      >
+                        <span className="text-xl">🖼️</span>
+                        <span>Gửi ảnh</span>
+                      </button>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    isVoiceRecording
-                      ? stopVoiceRecording()
-                      : void startVoiceRecording()
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAttachMenu(false);
+                          fileInputRef.current?.click();
+                        }}
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition hover:bg-white/10"
+                      >
+                        <span className="text-xl">📎</span>
+                        <span>Gửi file</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <input
+                  ref={messageInputRef}
+                  value={messageInput}
+                  onChange={(event) =>
+                    setMessageInput(event.target.value)
                   }
+                  onFocus={() => {
+                    setOpenMessageMenuId(null);
+                    setShowAttachMenu(false);
+                  }}
                   disabled={
-                    sending ||
-                    isSuspended ||
-                    isSelectedBlocked
+                    isSuspended || isSelectedBlocked
                   }
-                  aria-label={
-                    isVoiceRecording
-                      ? "Dừng ghi âm"
-                      : "Ghi âm"
+                  maxLength={2000}
+                  placeholder={
+                    isSuspended
+                      ? "Tài khoản đang bị khóa quyền chat"
+                      : isSelectedBlocked
+                        ? "Bạn đã chặn thành viên này"
+                        : `Nhắn tin cho ${selectedProfile.username}`
                   }
-                  title={
-                    isVoiceRecording
-                      ? "Dừng ghi âm"
-                      : "Ghi tin nhắn thoại"
-                  }
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                    isVoiceRecording
-                      ? "bg-red-500/20 text-red-300"
-                      : "hover:bg-white/10"
-                  }`}
-                >
-                  {isVoiceRecording ? "⏹️" : "🎤"}
-                </button>
+                  className="min-w-0 flex-1 bg-transparent px-2 py-3 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
+                />
 
                 <div
                   className="relative flex shrink-0 items-center"
@@ -3712,11 +3733,12 @@ export default function MessagesPage() {
                 >
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      setShowAttachMenu(false);
                       setShowEmojiPicker(
                         (current) => !current,
-                      )
-                    }
+                      );
+                    }}
                     disabled={
                       isSuspended || isSelectedBlocked
                     }
@@ -3729,7 +3751,7 @@ export default function MessagesPage() {
                   </button>
 
                   {showEmojiPicker && (
-                    <div className="absolute bottom-12 left-0 z-50 w-72 rounded-2xl border border-white/10 bg-[#1e1f22] p-3 shadow-2xl">
+                    <div className="absolute bottom-12 right-0 z-50 w-72 rounded-2xl border border-white/10 bg-[#1e1f22] p-3 shadow-2xl">
                       <div className="mb-2 flex items-center justify-between">
                         <strong className="text-sm">
                           Biểu tượng cảm xúc
@@ -3754,7 +3776,7 @@ export default function MessagesPage() {
                             onClick={() =>
                               insertEmoji(emoji)
                             }
-                            className="flex aspect-square items-center justify-center rounded-lg text-xl transition hover:bg-white/10 hover:scale-110"
+                            className="flex aspect-square items-center justify-center rounded-lg text-xl transition hover:scale-110 hover:bg-white/10"
                           >
                             {emoji}
                           </button>
@@ -3764,28 +3786,49 @@ export default function MessagesPage() {
                   )}
                 </div>
 
-                <input
-                  ref={messageInputRef}
-                  value={messageInput}
-                  onChange={(event) =>
-                    setMessageInput(event.target.value)
-                  }
-                  onFocus={() =>
-                    setOpenMessageMenuId(null)
-                  }
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAttachMenu(false);
+                    setShowEmojiPicker(false);
+
+                    if (isVoiceRecording) {
+                      stopVoiceRecording();
+                    } else {
+                      void startVoiceRecording();
+                    }
+                  }}
                   disabled={
-                    isSuspended || isSelectedBlocked
+                    sending ||
+                    isSuspended ||
+                    isSelectedBlocked
                   }
-                  maxLength={2000}
-                  placeholder={
-                    isSuspended
-                      ? "Tài khoản đang bị khóa quyền chat"
-                      : isSelectedBlocked
-                        ? "Bạn đã chặn thành viên này"
-                        : `Nhắn tin cho ${selectedProfile.username}`
+                  aria-label={
+                    isVoiceRecording
+                      ? "Dừng ghi âm"
+                      : "Ghi âm"
                   }
-                  className="min-w-0 flex-1 bg-transparent px-2 py-3 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
-                />
+                  title={
+                    isVoiceRecording
+                      ? "Dừng ghi âm"
+                      : "Ghi tin nhắn thoại"
+                  }
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                    isVoiceRecording
+                      ? "bg-red-500/20 text-red-300"
+                      : "hover:bg-white/10"
+                  }`}
+                >
+                  {isVoiceRecording ? (
+                    <span className="text-lg">⏹️</span>
+                  ) : (
+                    <img
+                      src="/icons/voice-mic.png"
+                      alt=""
+                      className="h-7 w-7 rounded-full object-cover"
+                    />
+                  )}
+                </button>
 
                 <button
                   type="submit"
@@ -3799,7 +3842,7 @@ export default function MessagesPage() {
                     !selectedDocumentFile &&
                     !selectedVoiceFile
                   }
-                  className="my-1.5 ml-2 rounded-lg px-4 py-2 text-sm font-semibold transition hover:brightness-110 disabled:opacity-50"
+                  className="my-1.5 ml-1 rounded-lg px-4 py-2 text-sm font-semibold transition hover:brightness-110 disabled:opacity-50"
                   style={{
                     backgroundColor: activeChatColor.hex,
                   }}

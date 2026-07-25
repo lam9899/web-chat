@@ -468,6 +468,10 @@ export default function Home() {
     showComposerEmojiPicker,
     setShowComposerEmojiPicker,
   ] = useState(false);
+  const [
+    showComposerAttachMenu,
+    setShowComposerAttachMenu,
+  ] = useState(false);
   const [isVoiceRecording, setIsVoiceRecording] =
     useState(false);
   const [voiceRecordingSeconds, setVoiceRecordingSeconds] =
@@ -1734,6 +1738,7 @@ export default function Home() {
 
     try {
       clearAttachment();
+      setShowComposerAttachMenu(false);
       setShowComposerEmojiPicker(false);
       setErrorMessage("");
 
@@ -2501,10 +2506,10 @@ export default function Home() {
             className="min-w-0 flex-1 text-left"
           >
             <div className="flex min-w-0 items-center gap-2">
+              <MemberBadge role={memberRole} />
               <div className="truncate text-sm font-semibold">
                 {username}
               </div>
-              <MemberBadge role={memberRole} />
             </div>
             <div className="truncate text-xs text-gray-400">
               {formatPublicId(publicId)} · Cài đặt tài khoản
@@ -2638,14 +2643,18 @@ export default function Home() {
 
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-x-2">
+                        <MemberBadge
+                          role={memberCards[message.user_id]?.role}
+                        />
                         <strong>
                           {memberCards[message.user_id]?.username ??
                             message.username}
                         </strong>
-                        <MemberBadge
-                          role={memberCards[message.user_id]?.role}
-                        />
-
+                        <span className="text-[11px] text-gray-500">
+                          {formatPublicId(
+                            memberCards[message.user_id]?.public_id,
+                          )}
+                        </span>
                         <span className="text-xs text-gray-400">
                           {formatTime(message.created_at)}
                         </span>
@@ -2654,12 +2663,6 @@ export default function Home() {
                           <span className="text-xs text-gray-500">
                             (đã sửa)
                           </span>
-                        )}
-                      </div>
-
-                      <div className="mt-0.5 text-[11px] text-gray-500">
-                        {formatPublicId(
-                          memberCards[message.user_id]?.public_id,
                         )}
                       </div>
 
@@ -2726,7 +2729,11 @@ export default function Home() {
                           ) ? (
                             <div className="mt-2 min-w-[260px] max-w-xl rounded-xl border border-white/10 bg-black/15 p-3">
                               <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                                <span>🎤</span>
+                                <img
+                                  src="/icons/voice-mic.png"
+                                  alt=""
+                                  className="h-5 w-5 rounded-full object-cover"
+                                />
                                 <span>Tin nhắn thoại</span>
                               </div>
                               <audio
@@ -3083,8 +3090,12 @@ export default function Home() {
           {attachmentFile && (
             <div className="mb-2 flex max-w-xl items-center gap-3 rounded-xl border border-white/10 bg-[#2b2d31] p-3">
               {voicePreviewUrl ? (
-                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-indigo-500/20 text-3xl">
-                  🎤
+                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-indigo-500/20">
+                  <img
+                    src="/icons/voice-mic.png"
+                    alt=""
+                    className="h-9 w-9 rounded-full object-cover"
+                  />
                 </span>
               ) : attachmentPreview ? (
                 <img
@@ -3141,7 +3152,7 @@ export default function Home() {
           )}
 
           <form onSubmit={sendMessage}>
-            <div className="flex items-center rounded-lg bg-[#383a40] px-2 md:px-3">
+            <div className="flex items-center gap-1 rounded-lg bg-[#383a40] px-2 md:px-3">
               <input
                 ref={documentInputRef}
                 type="file"
@@ -3158,80 +3169,78 @@ export default function Home() {
                 className="hidden"
               />
 
-              <button
-                type="button"
-                onClick={() =>
-                  documentInputRef.current?.click()
-                }
-                disabled={isChatSuspended || sending}
-                aria-label="Gửi tệp"
-                title={
-                  isChatSuspended
-                    ? "Tài khoản đang bị khóa chat"
-                    : "Gửi PDF, Word, Excel, PowerPoint, ZIP hoặc TXT"
-                }
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl text-gray-300 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                📎
-              </button>
+              <div className="relative flex shrink-0 items-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowComposerEmojiPicker(false);
+                    setShowComposerAttachMenu(
+                      (current) => !current,
+                    );
+                  }}
+                  disabled={isChatSuspended || sending}
+                  aria-label="Thêm ảnh hoặc tệp"
+                  aria-expanded={showComposerAttachMenu}
+                  title="Thêm"
+                  className="flex h-10 w-10 items-center justify-center rounded-full text-2xl font-light text-gray-300 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  +
+                </button>
 
-              <button
-                type="button"
-                onClick={() =>
-                  imageInputRef.current?.click()
-                }
-                disabled={isChatSuspended || sending}
-                aria-label="Gửi ảnh"
-                title={
-                  isChatSuspended
-                    ? "Tài khoản đang bị khóa chat"
-                    : "Gửi ảnh"
-                }
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl text-gray-300 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                🖼️
-              </button>
+                {showComposerAttachMenu && (
+                  <div className="absolute bottom-12 left-0 z-50 w-52 overflow-hidden rounded-2xl border border-white/10 bg-[#1e1f22] p-1.5 shadow-2xl">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowComposerAttachMenu(false);
+                        imageInputRef.current?.click();
+                      }}
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-gray-100 transition hover:bg-white/10"
+                    >
+                      <span className="text-xl">🖼️</span>
+                      <span>Gửi ảnh</span>
+                    </button>
 
-              <button
-                type="button"
-                onClick={() =>
-                  isVoiceRecording
-                    ? stopVoiceRecording()
-                    : void startVoiceRecording()
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowComposerAttachMenu(false);
+                        documentInputRef.current?.click();
+                      }}
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-gray-100 transition hover:bg-white/10"
+                    >
+                      <span className="text-xl">📎</span>
+                      <span>Gửi file</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <input
+                value={messageInput}
+                onChange={handleMessageInput}
+                onFocus={() =>
+                  setShowComposerAttachMenu(false)
                 }
-                disabled={
-                  isChatSuspended ||
-                  sending
-                }
-                aria-label={
-                  isVoiceRecording
-                    ? "Dừng ghi âm"
-                    : "Ghi âm"
-                }
-                title={
+                disabled={isChatSuspended}
+                placeholder={
                   isChatSuspended
-                    ? "Tài khoản đang bị khóa chat"
-                    : isVoiceRecording
-                      ? "Dừng ghi âm"
-                      : "Ghi tin nhắn thoại"
+                    ? "Tài khoản đang bị khóa quyền chat"
+                    : `Nhắn tin trong #${activeChannel.label}`
                 }
-                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                  isVoiceRecording
-                    ? "bg-red-500/20 text-red-300"
-                    : "text-gray-300 hover:bg-white/10 hover:text-white"
-                }`}
-              >
-                {isVoiceRecording ? "⏹️" : "🎤"}
-              </button>
+                maxLength={2000}
+                className="min-w-0 flex-1 bg-transparent px-2 py-3 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
+              />
 
               <div className="relative flex shrink-0 items-center">
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    setShowComposerAttachMenu(false);
                     setShowComposerEmojiPicker(
                       (current) => !current,
-                    )
-                  }
+                    );
+                  }}
                   disabled={isChatSuspended}
                   aria-label="Chọn biểu tượng cảm xúc"
                   aria-expanded={showComposerEmojiPicker}
@@ -3242,7 +3251,7 @@ export default function Home() {
                 </button>
 
                 {showComposerEmojiPicker && (
-                  <div className="absolute bottom-12 left-0 z-50 w-72 rounded-2xl border border-white/10 bg-[#1e1f22] p-3 shadow-2xl">
+                  <div className="absolute bottom-12 right-0 z-50 w-72 rounded-2xl border border-white/10 bg-[#1e1f22] p-3 shadow-2xl">
                     <div className="mb-2 flex items-center justify-between">
                       <strong className="text-sm">
                         Biểu tượng cảm xúc
@@ -3277,18 +3286,47 @@ export default function Home() {
                 )}
               </div>
 
-              <input
-                value={messageInput}
-                onChange={handleMessageInput}
-                disabled={isChatSuspended}
-                placeholder={
-                  isChatSuspended
-                    ? "Tài khoản đang bị khóa quyền chat"
-                    : `Nhắn tin trong #${activeChannel.label}`
+              <button
+                type="button"
+                onClick={() => {
+                  setShowComposerAttachMenu(false);
+                  setShowComposerEmojiPicker(false);
+
+                  if (isVoiceRecording) {
+                    stopVoiceRecording();
+                  } else {
+                    void startVoiceRecording();
+                  }
+                }}
+                disabled={isChatSuspended || sending}
+                aria-label={
+                  isVoiceRecording
+                    ? "Dừng ghi âm"
+                    : "Ghi âm"
                 }
-                maxLength={2000}
-                className="min-w-0 flex-1 bg-transparent py-3 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
-              />
+                title={
+                  isChatSuspended
+                    ? "Tài khoản đang bị khóa chat"
+                    : isVoiceRecording
+                      ? "Dừng ghi âm"
+                      : "Ghi tin nhắn thoại"
+                }
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                  isVoiceRecording
+                    ? "bg-red-500/20 text-red-300"
+                    : "hover:bg-white/10"
+                }`}
+              >
+                {isVoiceRecording ? (
+                  <span className="text-lg">⏹️</span>
+                ) : (
+                  <img
+                    src="/icons/voice-mic.png"
+                    alt=""
+                    className="h-7 w-7 rounded-full object-cover"
+                  />
+                )}
+              </button>
 
               <button
                 type="submit"
@@ -3300,7 +3338,7 @@ export default function Home() {
                   (!messageInput.trim() &&
                     !attachmentFile)
                 }
-                className="ml-3 rounded bg-indigo-500 px-3 py-1.5 text-sm font-semibold disabled:opacity-50"
+                className="ml-1 rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-semibold transition hover:brightness-110 disabled:opacity-50"
               >
                 {sending ? "Đang gửi..." : "Gửi"}
               </button>
@@ -3506,13 +3544,14 @@ export default function Home() {
 
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-1.5">
+                      <MemberBadge role={member.role} />
                       <span className="truncate font-medium">
                         {member.username}
                       </span>
-                      <span className="shrink-0 text-[10px] text-gray-500">
-                        {formatPublicId(member.public_id)}
-                      </span>
-                      <MemberBadge role={member.role} />
+                    </span>
+
+                    <span className="mt-0.5 block truncate text-[10px] text-gray-500">
+                      {formatPublicId(member.public_id)}
                     </span>
 
                     <span

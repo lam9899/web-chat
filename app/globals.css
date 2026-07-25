@@ -24,3 +24,42 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* TALK_UI_SCROLLBAR_START */
+:root {
+  --talk-scrollbar-track: #2b2d31;
+  --talk-scrollbar-thumb: #4a4f5c;
+  --talk-scrollbar-thumb-hover: #5c6270;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color:
+    var(--talk-scrollbar-thumb)
+    var(--talk-scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--talk-scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 2px solid var(--talk-scrollbar-track);
+  border-radius: 999px;
+  background: var(--talk-scrollbar-thumb);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--talk-scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--talk-scrollbar-track);
+}
+/* TALK_UI_SCROLLBAR_END */
