@@ -253,6 +253,40 @@ function attachmentIcon(
   return "📎";
 }
 
+function directMessagePreview(
+  message: DirectMessageRow,
+) {
+  const content = message.content.trim();
+
+  if (content) {
+    return content.length > 90
+      ? `${content.slice(0, 90)}…`
+      : content;
+  }
+
+  if (isVoiceAttachment(message.attachment_type)) {
+    return "Tin nhắn thoại";
+  }
+
+  if (isImageAttachment(message.attachment_type)) {
+    return "Ảnh";
+  }
+
+  if (message.attachment_name) {
+    return message.attachment_name;
+  }
+
+  return "Tin nhắn";
+}
+
+const DIRECT_REACTION_OPTIONS = [
+  "👍",
+  "❤️",
+  "😂",
+  "😮",
+  "😢",
+] as const;
+
 function createPrivateMediaId() {
   if (
     typeof crypto !== "undefined" &&
@@ -309,11 +343,20 @@ type DirectMessageRow = {
   created_at: string;
   edited_at: string | null;
   read_at: string | null;
+  reply_to_id: number | null;
   attachment_path: string | null;
   attachment_name: string | null;
   attachment_type: string | null;
   attachment_size: number | null;
   attachment_url?: string | null;
+};
+
+type DirectMessageReactionRow = {
+  id: number;
+  message_id: number;
+  user_id: string;
+  emoji: string;
+  created_at: string;
 };
 
 type ImageViewerState = {
@@ -744,6 +787,16 @@ export default function MessagesPage() {
     openMessageMenuId,
     setOpenMessageMenuId,
   ] = useState<number | null>(null);
+  const [
+    openReactionPickerId,
+    setOpenReactionPickerId,
+  ] = useState<number | null>(null);
+  const [replyingTo, setReplyingTo] =
+    useState<DirectMessageRow | null>(null);
+  const [
+    directMessageReactions,
+    setDirectMessageReactions,
+  ] = useState<DirectMessageReactionRow[]>([]);
   const [showEmojiPicker, setShowEmojiPicker] =
     useState(false);
   const [showAttachMenu, setShowAttachMenu] =
@@ -921,12 +974,14 @@ export default function MessagesPage() {
 
       if (
         target?.closest("[data-message-menu]") ||
-        target?.closest("[data-emoji-picker]")
+        target?.closest("[data-emoji-picker]") ||
+        target?.closest("[data-direct-reaction-picker]")
       ) {
         return;
       }
 
       setOpenMessageMenuId(null);
+      setOpenReactionPickerId(null);
       setShowEmojiPicker(false);
     }
 
@@ -1015,6 +1070,47 @@ export default function MessagesPage() {
       },
     );
   }, [onlineFriendIds, profiles, searchQuery]);
+
+  const directMessageById = useMemo(
+    () =>
+      new Map(
+        messages.map((message) => [
+          message.id,
+          message,
+        ]),
+      ),
+    [messages],
+  );
+
+  const reactionsByDirectMessage = useMemo(() => {
+    const grouped = new Map<
+      number,
+      Map<string, { count: number; mine: boolean }>
+    >();
+
+    for (const reaction of directMessageReactions) {
+      if (!grouped.has(reaction.message_id)) {
+        grouped.set(reaction.message_id, new Map());
+      }
+
+      const messageReactions =
+        grouped.get(reaction.message_id)!;
+      const current =
+        messageReactions.get(reaction.emoji) ?? {
+          count: 0,
+          mine: false,
+        };
+
+      messageReactions.set(reaction.emoji, {
+        count: current.count + 1,
+        mine:
+          current.mine ||
+          reaction.user_id === currentUserId,
+      });
+    }
+
+    return grouped;
+  }, [currentUserId, directMessageReactions]);
 
   const conversationTimeline =
     useMemo<ConversationTimelineItem[]>(() => {
@@ -1708,6 +1804,8 @@ export default function MessagesPage() {
     if (!currentUserId || !selectedProfile) {
       setMessages([]);
       setCallHistory([]);
+      setDirectMessageReactions([]);
+      setReplyingTo(null);
       return;
     }
 
@@ -1719,6 +1817,9 @@ export default function MessagesPage() {
       setCallHistoryLoading(true);
       setMessages([]);
       setCallHistory([]);
+      setDirectMessageReactions([]);
+      setReplyingTo(null);
+      setOpenReactionPickerId(null);
       setEditingId(null);
       setEditingContent("");
       setSelectedImageFile(null);
@@ -1739,7 +1840,7 @@ export default function MessagesPage() {
         supabase
           .from("direct_messages")
           .select(
-            "id, sender_id, receiver_id, content, created_at, edited_at, read_at, attachment_path, attachment_name, attachment_type, attachment_size",
+            "id, sender_id, receiver_id, content, created_at, edited_at, read_at, reply_to_id, attachment_path, attachment_name, attachment_type, attachment_size",
           )
           .or(
             `and(sender_id.eq.${currentUserId},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${currentUserId})`,
@@ -1785,6 +1886,38 @@ export default function MessagesPage() {
         if (!active) return;
         setMessages(loadedMessages);
 
+        const loadedMessageIds = loadedMessages.map(
+          (message) => message.id,
+        );
+
+        if (loadedMessageIds.length > 0) {
+          const {
+            data: reactionData,
+            error: reactionError,
+          } = await supabase
+            .from("direct_message_reactions")
+            .select(
+              "id, message_id, user_id, emoji, created_at",
+            )
+            .in("message_id", loadedMessageIds)
+            .order("created_at", {
+              ascending: true,
+            });
+
+          if (!active) return;
+
+          if (reactionError) {
+            setErrorMessage(
+              `Không thể tải cảm xúc: ${reactionError.message}`,
+            );
+          } else {
+            setDirectMessageReactions(
+              (reactionData ??
+                []) as DirectMessageReactionRow[],
+            );
+          }
+        }
+
         const { error: readError } = await supabase.rpc(
           "mark_direct_messages_read",
           {
@@ -1828,6 +1961,80 @@ export default function MessagesPage() {
     };
   }, [currentUserId, selectedProfile]);
 
+
+  useEffect(() => {
+    if (
+      !currentUserId ||
+      !selectedProfile ||
+      messages.length === 0
+    ) {
+      return;
+    }
+
+    const visibleMessageIds = new Set(
+      messages.map((message) => message.id),
+    );
+
+    const reactionChannel = supabase
+      .channel(
+        `direct-reactions-${currentUserId}-${selectedProfile.id}`,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "direct_message_reactions",
+        },
+        (payload) => {
+          if (
+            payload.eventType === "INSERT" ||
+            payload.eventType === "UPDATE"
+          ) {
+            const reaction =
+              payload.new as DirectMessageReactionRow;
+
+            if (
+              !visibleMessageIds.has(
+                reaction.message_id,
+              )
+            ) {
+              return;
+            }
+
+            setDirectMessageReactions((current) => {
+              const exists = current.some(
+                (item) => item.id === reaction.id,
+              );
+
+              return exists
+                ? current.map((item) =>
+                    item.id === reaction.id
+                      ? reaction
+                      : item,
+                  )
+                : [...current, reaction];
+            });
+          }
+
+          if (payload.eventType === "DELETE") {
+            const deleted =
+              payload.old as DirectMessageReactionRow;
+
+            setDirectMessageReactions((current) =>
+              current.filter(
+                (item) => item.id !== deleted.id,
+              ),
+            );
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(reactionChannel);
+    };
+  }, [currentUserId, messages, selectedProfile]);
 
   useEffect(() => {
     if (!currentUserId || !selectedProfile) return;
@@ -1901,6 +2108,8 @@ export default function MessagesPage() {
     setShowContacts(false);
     setShowPrivateChatSettings(false);
     setOpenMessageMenuId(null);
+    setOpenReactionPickerId(null);
+    setReplyingTo(null);
     setShowEmojiPicker(false);
     setSelectedImageFile(null);
     setSelectedImagePreview("");
@@ -2259,6 +2468,90 @@ export default function MessagesPage() {
     setShowEmojiPicker(false);
   }
 
+  function scrollToDirectMessage(
+    messageId: number,
+  ) {
+    document
+      .getElementById(
+        `direct-message-${messageId}`,
+      )
+      ?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+  }
+
+  async function toggleDirectMessageReaction(
+    messageId: number,
+    emoji: string,
+  ) {
+    if (!currentUserId || isSuspended) return;
+
+    const existing =
+      directMessageReactions.find(
+        (reaction) =>
+          reaction.message_id === messageId &&
+          reaction.user_id === currentUserId &&
+          reaction.emoji === emoji,
+      );
+
+    setOpenReactionPickerId(null);
+    setErrorMessage("");
+
+    if (existing) {
+      const { error } = await supabase
+        .from("direct_message_reactions")
+        .delete()
+        .eq("id", existing.id);
+
+      if (error) {
+        setErrorMessage(
+          `Không thể bỏ cảm xúc: ${error.message}`,
+        );
+        return;
+      }
+
+      setDirectMessageReactions((current) =>
+        current.filter(
+          (reaction) =>
+            reaction.id !== existing.id,
+        ),
+      );
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("direct_message_reactions")
+      .insert({
+        message_id: messageId,
+        user_id: currentUserId,
+        emoji,
+      })
+      .select(
+        "id, message_id, user_id, emoji, created_at",
+      )
+      .single();
+
+    if (error) {
+      setErrorMessage(
+        `Không thể thả cảm xúc: ${error.message}`,
+      );
+      return;
+    }
+
+    const inserted =
+      data as DirectMessageReactionRow;
+
+    setDirectMessageReactions((current) =>
+      current.some(
+        (reaction) =>
+          reaction.id === inserted.id,
+      )
+        ? current
+        : [...current, inserted],
+    );
+  }
+
   async function sendMessage(
     event: FormEvent<HTMLFormElement>,
   ) {
@@ -2330,6 +2623,7 @@ export default function MessagesPage() {
         sender_id: currentUserId,
         receiver_id: selectedProfile.id,
         content,
+        reply_to_id: replyingTo?.id ?? null,
         attachment_path:
           uploadedPath || null,
         attachment_name:
@@ -2378,6 +2672,7 @@ export default function MessagesPage() {
       );
     } else {
       setMessageInput("");
+      setReplyingTo(null);
       clearSelectedImage();
       clearSelectedDocument();
     }
@@ -2994,19 +3289,11 @@ export default function MessagesPage() {
                     isSuspended
                   }
                   title="Gọi thoại"
-                  aria-label="Gọi thoại"
-                  className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white shadow-sm transition hover:scale-[1.03] hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded bg-green-600 px-3 py-2 text-sm font-semibold hover:bg-green-500 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {startingCallType === "audio" ? (
-                    <span className="text-sm font-bold text-slate-700">...</span>
-                  ) : (
-                    <img
-                      src="/icons/call-phone-blue.png"
-                      alt=""
-                      aria-hidden="true"
-                      className="h-5 w-5 object-contain"
-                    />
-                  )}
+                  {startingCallType === "audio"
+                    ? "..."
+                    : "📞"}
                 </button>
 
                 <button
@@ -3018,34 +3305,39 @@ export default function MessagesPage() {
                     isSuspended
                   }
                   title="Gọi video"
-                  aria-label="Gọi video"
-                  className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white shadow-sm transition hover:scale-[1.03] hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded px-3 py-2 text-sm font-semibold transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                  style={{
+                    backgroundColor: activeChatColor.hex,
+                  }}
                 >
-                  {startingCallType === "video" ? (
-                    <span className="text-sm font-bold text-slate-700">...</span>
-                  ) : (
-                    <img
-                      src="/icons/call-video-blue.png"
-                      alt=""
-                      aria-hidden="true"
-                      className="h-5 w-5 object-contain"
-                    />
-                  )}
+                  {startingCallType === "video"
+                    ? "..."
+                    : "🎥"}
                 </button>
 
                 <button
                   type="button"
                   onClick={openPrivateChatSettings}
-                  title="Thông tin cuộc trò chuyện"
-                  aria-label="Thông tin cuộc trò chuyện"
-                  className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white shadow-sm transition hover:scale-[1.03] hover:bg-slate-100"
+                  title="Cài đặt cuộc trò chuyện"
+                  aria-label="Cài đặt cuộc trò chuyện"
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/15"
+                  style={{
+                    boxShadow: `inset 0 0 0 1px ${activeChatColor.border}`,
+                  }}
                 >
-                  <img
-                    src="/icons/call-info-blue.png"
-                    alt=""
+                  <svg
+                    viewBox="0 0 24 24"
                     aria-hidden="true"
-                    className="h-5 w-5 object-contain"
-                  />
+                    className="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-3v-.08a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7 15.4a1.7 1.7 0 0 0-1.56-1.03H5.3v-3h.14A1.7 1.7 0 0 0 7 10.34a1.7 1.7 0 0 0-.34-1.88L6.6 8.4l2.12-2.12.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 11.7 5.1V5h3v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.14v3h-.14A1.7 1.7 0 0 0 19.4 15Z" />
+                  </svg>
                 </button>
               </div>
             </header>
@@ -3250,9 +3542,20 @@ export default function MessagesPage() {
                         editingId === message.id;
                       const isWorking =
                         workingId === message.id;
+                      const repliedMessage =
+                        message.reply_to_id
+                          ? directMessageById.get(
+                              message.reply_to_id,
+                            )
+                          : null;
+                      const messageReactions =
+                        reactionsByDirectMessage.get(
+                          message.id,
+                        );
 
                       return (
                         <article
+                          id={`direct-message-${message.id}`}
                           key={timelineItem.key}
                           className={`group flex ${
                             isMine
@@ -3321,6 +3624,32 @@ export default function MessagesPage() {
                               </div>
                             ) : (
                               <>
+                                {repliedMessage && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      scrollToDirectMessage(
+                                        repliedMessage.id,
+                                      )
+                                    }
+                                    className="mb-2 block w-full rounded-xl border-l-4 border-white/40 bg-black/15 px-3 py-2 text-left transition hover:bg-black/25"
+                                    title="Đi tới tin nhắn được trả lời"
+                                  >
+                                    <span className="block text-[11px] font-bold text-white/70">
+                                      Đang trả lời{" "}
+                                      {repliedMessage.sender_id ===
+                                      currentUserId
+                                        ? "chính bạn"
+                                        : selectedProfile.username}
+                                    </span>
+                                    <span className="mt-0.5 block truncate text-xs text-white/80">
+                                      {directMessagePreview(
+                                        repliedMessage,
+                                      )}
+                                    </span>
+                                  </button>
+                                )}
+
                                 {message.attachment_url &&
                                 isVoiceAttachment(
                                   message.attachment_type,
@@ -3447,6 +3776,112 @@ export default function MessagesPage() {
                               </>
                             )}
 
+                            {!isEditing && (
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                {messageReactions &&
+                                  Array.from(
+                                    messageReactions.entries(),
+                                  ).map(
+                                    ([
+                                      emoji,
+                                      reaction,
+                                    ]) => (
+                                      <button
+                                        key={emoji}
+                                        type="button"
+                                        onClick={() =>
+                                          void toggleDirectMessageReaction(
+                                            message.id,
+                                            emoji,
+                                          )
+                                        }
+                                        className={`rounded-full border px-2 py-0.5 text-xs transition ${
+                                          reaction.mine
+                                            ? "border-indigo-300/70 bg-indigo-500/25"
+                                            : "border-white/10 bg-black/15 hover:bg-black/25"
+                                        }`}
+                                        title={
+                                          reaction.mine
+                                            ? "Bỏ cảm xúc"
+                                            : "Thả cảm xúc"
+                                        }
+                                      >
+                                        {emoji}{" "}
+                                        {reaction.count}
+                                      </button>
+                                    ),
+                                  )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setReplyingTo(message);
+                                    setOpenReactionPickerId(
+                                      null,
+                                    );
+                                    window.requestAnimationFrame(
+                                      () =>
+                                        messageInputRef.current?.focus(),
+                                    );
+                                  }}
+                                  className="rounded-full bg-black/15 px-2 py-0.5 text-xs text-white/75 transition hover:bg-black/25 hover:text-white"
+                                  title="Trả lời tin nhắn"
+                                >
+                                  ↩ Trả lời
+                                </button>
+
+                                <div
+                                  className="relative"
+                                  data-direct-reaction-picker
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setOpenReactionPickerId(
+                                        (current) =>
+                                          current === message.id
+                                            ? null
+                                            : message.id,
+                                      )
+                                    }
+                                    className="rounded-full bg-black/15 px-2 py-0.5 text-xs text-white/75 transition hover:bg-black/25 hover:text-white"
+                                    title="Thả cảm xúc"
+                                  >
+                                    😊
+                                  </button>
+
+                                  {openReactionPickerId ===
+                                    message.id && (
+                                    <div
+                                      className={`absolute bottom-7 z-50 flex gap-1 rounded-full border border-white/10 bg-[#1e1f22] p-1.5 shadow-2xl ${
+                                        isMine
+                                          ? "right-0"
+                                          : "left-0"
+                                      }`}
+                                    >
+                                      {DIRECT_REACTION_OPTIONS.map(
+                                        (emoji) => (
+                                          <button
+                                            key={emoji}
+                                            type="button"
+                                            onClick={() =>
+                                              void toggleDirectMessageReaction(
+                                                message.id,
+                                                emoji,
+                                              )
+                                            }
+                                            className="flex h-8 w-8 items-center justify-center rounded-full text-lg hover:bg-white/10"
+                                          >
+                                            {emoji}
+                                          </button>
+                                        ),
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
                             {isMine && !isEditing && (
                               <div
                                 className="absolute -right-3 -top-3 z-30"
@@ -3529,6 +3964,37 @@ export default function MessagesPage() {
               onSubmit={sendMessage}
               className="shrink-0 border-t border-black/20 bg-[#313338] p-3 md:p-4"
             >
+              {replyingTo && (
+                <div className="mb-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-[#2b2d31] p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-indigo-300">
+                      Đang trả lời{" "}
+                      {replyingTo.sender_id ===
+                      currentUserId
+                        ? "chính bạn"
+                        : selectedProfile.username}
+                    </p>
+                    <p className="mt-1 truncate text-sm text-gray-300">
+                      {directMessagePreview(
+                        replyingTo,
+                      )}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setReplyingTo(null)
+                    }
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-lg text-gray-300 hover:bg-white/15 hover:text-white"
+                    title="Hủy trả lời"
+                    aria-label="Hủy trả lời"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
               {isVoiceRecording && (
                 <div className="mb-3 flex items-center gap-3 rounded-2xl border border-red-500/30 bg-red-500/10 p-3">
                   <span className="h-3 w-3 animate-pulse rounded-full bg-red-500" />
