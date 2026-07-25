@@ -83,7 +83,7 @@ export default function FriendManager({
   initialTab = "friends",
 }: {
   onFriendsChanged?: () => void;
-  triggerVariant?: "icon" | "sidebar";
+  triggerVariant?: "icon" | "sidebar" | "compact-add";
   initialTab?: TabId;
 }) {
   const [open, setOpen] = useState(false);
@@ -342,17 +342,23 @@ export default function FriendManager({
         className={
           triggerVariant === "sidebar"
             ? "relative flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-400"
-            : "relative flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 text-lg hover:bg-white/15"
+            : triggerVariant === "compact-add"
+              ? "relative flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-500 text-2xl font-bold text-white transition hover:bg-indigo-400"
+              : "relative flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 text-lg hover:bg-white/15"
         }
         title={
-          triggerVariant === "sidebar"
+          triggerVariant === "sidebar" ||
+          triggerVariant === "compact-add"
             ? "Tìm và thêm bạn bè"
             : "Bạn bè"
         }
         aria-label="Quản lý bạn bè"
       >
         <span aria-hidden="true">
-          {triggerVariant === "sidebar" ? "➕" : "👥"}
+          {triggerVariant === "sidebar" ||
+          triggerVariant === "compact-add"
+            ? "+"
+            : "👥"}
         </span>
 
         {triggerVariant === "sidebar" && (

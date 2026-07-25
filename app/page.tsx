@@ -259,6 +259,10 @@ export default function Home() {
   const [showChannels, setShowChannels] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [
+    friendsSidebarCollapsed,
+    setFriendsSidebarCollapsed,
+  ] = useState(false);
+  const [
     openMessageMenuId,
     setOpenMessageMenuId,
   ] = useState<number | null>(null);
@@ -284,6 +288,27 @@ export default function Home() {
     null,
   );
   const lastTypingSentRef = useRef(0);
+
+  useEffect(() => {
+    const savedState = window.localStorage.getItem(
+      "friends-sidebar-collapsed",
+    );
+
+    setFriendsSidebarCollapsed(savedState === "1");
+  }, []);
+
+  function toggleFriendsSidebar() {
+    setFriendsSidebarCollapsed((current) => {
+      const next = !current;
+
+      window.localStorage.setItem(
+        "friends-sidebar-collapsed",
+        next ? "1" : "0",
+      );
+
+      return next;
+    });
+  }
 
   const activeChannel = useMemo(
     () =>
@@ -1757,7 +1782,13 @@ export default function Home() {
   }
 
   return (
-    <main className="relative grid h-screen grid-cols-1 overflow-hidden bg-[#313338] text-white md:grid-cols-[72px_240px_minmax(0,1fr)] lg:grid-cols-[72px_240px_minmax(0,1fr)_240px]">
+    <main
+      className={`relative grid h-screen grid-cols-1 overflow-hidden bg-[#313338] text-white md:grid-cols-[72px_240px_minmax(0,1fr)] ${
+        friendsSidebarCollapsed
+          ? "lg:grid-cols-[72px_240px_minmax(0,1fr)_76px]"
+          : "lg:grid-cols-[72px_240px_minmax(0,1fr)_340px]"
+      }`}
+    >
       {showChannels && (
         <button
           type="button"
@@ -2465,115 +2496,238 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Thành viên */}
+      {/* Bạn bè */}
       <aside
-        className={`fixed inset-y-0 right-0 z-40 w-[260px] overflow-y-auto bg-[#2b2d31] p-4 transition-transform lg:static lg:w-auto lg:translate-x-0 ${
+        className={`fixed inset-y-0 right-0 z-40 overflow-y-auto bg-[#2b2d31] transition-all duration-200 lg:static lg:translate-x-0 ${
+          friendsSidebarCollapsed
+            ? "w-[76px] px-2 py-3"
+            : "w-[320px] p-4 lg:w-auto"
+        } ${
           showMembers ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-xs font-bold uppercase text-gray-400">
-            Bạn bè — {onlineUsers.length} online
-          </h2>
+        <div
+          className={`mb-3 flex items-center ${
+            friendsSidebarCollapsed
+              ? "flex-col gap-2"
+              : "justify-between"
+          }`}
+        >
+          {!friendsSidebarCollapsed && (
+            <h2 className="text-xs font-bold uppercase text-gray-400">
+              Bạn bè — {onlineUsers.length} online
+            </h2>
+          )}
 
-          <button
-            type="button"
-            onClick={() => setShowMembers(false)}
-            className="text-gray-400 lg:hidden"
+          <div
+            className={`flex items-center ${
+              friendsSidebarCollapsed
+                ? "flex-col gap-2"
+                : "gap-2"
+            }`}
           >
-            ✕
-          </button>
-        </div>
-
-        <div className="mb-4 rounded-2xl border border-white/10 bg-black/10 p-2">
-          <FriendManager
-            triggerVariant="sidebar"
-            initialTab="add"
-          />
-          <p className="mt-2 px-1 text-center text-[11px] text-gray-500">
-            Tìm bằng Gmail, tên hoặc ID #000000
-          </p>
-        </div>
-
-        {sidebarMembers.map((member) => {
-          const isOnline = onlineUserIds.has(member.id);
-
-          return (
             <button
-              key={member.id}
               type="button"
-              onClick={() => {
-                window.location.href =
-                  member.id === userId
-                    ? "/settings"
-                    : `/messages?user=${encodeURIComponent(
-                        member.id,
-                      )}`;
-              }}
-              className={`mb-1 flex w-full items-center gap-3 rounded p-2 text-left transition hover:bg-white/5 ${
-                isOnline
-                  ? "text-gray-200"
-                  : "text-gray-500 opacity-60"
-              }`}
+              onClick={toggleFriendsSidebar}
+              title={
+                friendsSidebarCollapsed
+                  ? "Mở rộng danh sách bạn bè"
+                  : "Thu gọn danh sách bạn bè"
+              }
+              aria-label={
+                friendsSidebarCollapsed
+                  ? "Mở rộng danh sách bạn bè"
+                  : "Thu gọn danh sách bạn bè"
+              }
+              className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-lg text-gray-300 transition hover:bg-white/15 hover:text-white"
             >
-              <div className="relative shrink-0">
-                {member.avatar_url ? (
-                  <img
-                    src={member.avatar_url}
-                    alt={member.username}
-                    className={`h-9 w-9 rounded-full object-cover ${
-                      isOnline ? "" : "grayscale"
-                    }`}
-                  />
-                ) : (
-                  <div
-                    className={`flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold ${
-                      isOnline ? "" : "grayscale"
+              {friendsSidebarCollapsed ? "»" : "«"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowMembers(false)}
+              className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-gray-400 lg:hidden"
+              aria-label="Đóng danh sách bạn bè"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        {friendsSidebarCollapsed ? (
+          <>
+            <div className="mb-4 flex justify-center">
+              <FriendManager
+                triggerVariant="compact-add"
+                initialTab="add"
+              />
+            </div>
+
+            <div className="space-y-2">
+              {sidebarMembers.map((member) => {
+                const isOnline = onlineUserIds.has(member.id);
+                const statusText = isOnline
+                  ? "Online"
+                  : `Offline (${formatLastActive(
+                      member.last_seen_at,
+                      clock,
+                    )})`;
+
+                return (
+                  <button
+                    key={member.id}
+                    type="button"
+                    onClick={() => {
+                      window.location.href =
+                        member.id === userId
+                          ? "/settings"
+                          : `/messages?user=${encodeURIComponent(
+                              member.id,
+                            )}`;
+                    }}
+                    title={`${member.username} · ${statusText}`}
+                    aria-label={`${member.username} · ${statusText}`}
+                    className={`flex w-full justify-center rounded-xl p-1.5 transition hover:bg-white/10 ${
+                      isOnline
+                        ? "opacity-100"
+                        : "opacity-60"
                     }`}
                   >
-                    {member.username.charAt(0).toUpperCase()}
-                  </div>
-                )}
+                    <div className="relative shrink-0">
+                      {member.avatar_url ? (
+                        <img
+                          src={member.avatar_url}
+                          alt={member.username}
+                          className={`h-11 w-11 rounded-full object-cover ${
+                            isOnline ? "" : "grayscale"
+                          }`}
+                        />
+                      ) : (
+                        <div
+                          className={`flex h-11 w-11 items-center justify-center rounded-full bg-indigo-500 font-bold ${
+                            isOnline ? "" : "grayscale"
+                          }`}
+                        >
+                          {member.username
+                            .charAt(0)
+                            .toUpperCase()}
+                        </div>
+                      )}
 
-                <span
-                  className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] ${
-                    isOnline ? "bg-green-500" : "bg-gray-600"
-                  }`}
-                />
-              </div>
+                      <span
+                        className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-[#2b2d31] ${
+                          isOnline
+                            ? "bg-green-500"
+                            : "bg-gray-600"
+                        }`}
+                      />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mb-4 rounded-2xl border border-white/10 bg-black/10 p-3">
+              <FriendManager
+                triggerVariant="sidebar"
+                initialTab="add"
+              />
+              <p className="mt-2 px-1 text-center text-[11px] text-gray-500">
+                Tìm bằng Gmail, tên hoặc ID #000000
+              </p>
+            </div>
 
-              <span className="min-w-0 flex-1">
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate font-medium">
-                    {member.username}
-                  </span>
-                  <span className="shrink-0 text-[10px] text-gray-500">
-                    {formatPublicId(member.public_id)}
-                  </span>
-                  <MemberBadge role={member.role} />
-                </span>
-                <span
-                  className={`mt-0.5 block truncate text-[11px] ${
+            {sidebarMembers.map((member) => {
+              const isOnline = onlineUserIds.has(member.id);
+
+              return (
+                <button
+                  key={member.id}
+                  type="button"
+                  onClick={() => {
+                    window.location.href =
+                      member.id === userId
+                        ? "/settings"
+                        : `/messages?user=${encodeURIComponent(
+                            member.id,
+                          )}`;
+                  }}
+                  className={`mb-1 flex w-full items-center gap-3 rounded-xl p-2.5 text-left transition hover:bg-white/5 ${
                     isOnline
-                      ? "text-green-400"
-                      : "text-gray-500"
+                      ? "text-gray-200"
+                      : "text-gray-500 opacity-60"
                   }`}
                 >
-                  {isOnline
-                    ? "Online"
-                    : `Offline (${formatLastActive(
-                        member.last_seen_at,
-                        clock,
-                      )})`}
-                </span>
-              </span>
+                  <div className="relative shrink-0">
+                    {member.avatar_url ? (
+                      <img
+                        src={member.avatar_url}
+                        alt={member.username}
+                        className={`h-10 w-10 rounded-full object-cover ${
+                          isOnline ? "" : "grayscale"
+                        }`}
+                      />
+                    ) : (
+                      <div
+                        className={`flex h-10 w-10 items-center justify-center rounded-full bg-indigo-500 font-bold ${
+                          isOnline ? "" : "grayscale"
+                        }`}
+                      >
+                        {member.username
+                          .charAt(0)
+                          .toUpperCase()}
+                      </div>
+                    )}
 
-              <span className="text-[11px] text-gray-500">
-                {member.id === userId ? "Bạn" : "Nhắn tin"}
-              </span>
-            </button>
-          );
-        })}
+                    <span
+                      className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-[#2b2d31] ${
+                        isOnline
+                          ? "bg-green-500"
+                          : "bg-gray-600"
+                      }`}
+                    />
+                  </div>
+
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate font-medium">
+                        {member.username}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-gray-500">
+                        {formatPublicId(member.public_id)}
+                      </span>
+                      <MemberBadge role={member.role} />
+                    </span>
+
+                    <span
+                      className={`mt-0.5 block truncate text-[11px] ${
+                        isOnline
+                          ? "text-green-400"
+                          : "text-gray-500"
+                      }`}
+                    >
+                      {isOnline
+                        ? "Online"
+                        : `Offline (${formatLastActive(
+                            member.last_seen_at,
+                            clock,
+                          )})`}
+                    </span>
+                  </span>
+
+                  <span className="shrink-0 text-[11px] text-gray-500">
+                    {member.id === userId
+                      ? "Bạn"
+                      : "Nhắn tin"}
+                  </span>
+                </button>
+              );
+            })}
+          </>
+        )}
       </aside>
 
       {reportingMessage && (
