@@ -15,6 +15,7 @@ import MemberBadge, {
   formatPublicId,
 } from "@/components/member-badge";
 import ChannelRail from "../../channel-rail";
+import ChannelVoiceRoom from "../../channel-voice-room";
 import {
   type ChannelMember,
   type ChannelMessage,
@@ -499,16 +500,19 @@ export default function DynamicChannelPage() {
             </p>
           )}
 
-          {channel.channel_type === "voice" && (
-            <div className="mb-5 rounded-3xl border border-indigo-400/20 bg-indigo-500/10 p-6">
-              <h2 className="text-xl font-black">🔊 Kênh thoại</h2>
-              <p className="mt-2 text-sm leading-6 text-indigo-100/75">
-                Đàm thoại nhiều người bằng LiveKit sẽ được nối ở giai đoạn 2.
-              </p>
-            </div>
+          {/* CHANNEL_VOICE_LIVEKIT_STAGE2 */}
+          {(channel.channel_type === "voice" ||
+            channel.channel_type === "both") && (
+            <ChannelVoiceRoom
+              channelId={channel.id}
+              channelName={channel.name}
+              voiceOnly={
+                channel.channel_type === "voice"
+              }
+            />
           )}
 
-          {messages.length === 0 ? (
+          {canText && (messages.length === 0 ? (
             <div className="flex min-h-[50vh] items-center justify-center text-center">
               <div>
                 <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-indigo-500/15 text-3xl">
@@ -561,7 +565,7 @@ export default function DynamicChannelPage() {
                 </article>
               ))}
             </div>
-          )}
+          ))}
 
           <div ref={messagesEndRef} />
         </div>
