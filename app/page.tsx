@@ -28,6 +28,8 @@ type MessageRow = {
   reply_to_id: number | null;
   attachment_url: string | null;
   attachment_name: string | null;
+  attachment_type: string | null;
+  attachment_size: number | null;
   edited_at: string | null;
 };
 
@@ -164,6 +166,155 @@ const initialChannels: ChannelItem[] = [
 
 const reactionChoices = ["👍", "❤️", "😂", "😮"];
 
+const composerEmojiChoices = [
+  "😀",
+  "😁",
+  "😂",
+  "🤣",
+  "😊",
+  "😍",
+  "🥰",
+  "😎",
+  "🤔",
+  "😮",
+  "😭",
+  "😡",
+  "👍",
+  "👎",
+  "👏",
+  "🙏",
+  "❤️",
+  "🔥",
+  "🎉",
+  "✅",
+  "💯",
+  "🤝",
+  "🌹",
+  "😴",
+];
+
+const MAX_PUBLIC_IMAGE_SIZE = 5 * 1024 * 1024;
+const MAX_PUBLIC_FILE_SIZE = 20 * 1024 * 1024;
+
+const allowedPublicImageTypes = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+
+const allowedPublicFileTypes = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/zip",
+  "text/plain",
+]);
+
+const PUBLIC_FILE_ACCEPT = [
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".ppt",
+  ".pptx",
+  ".zip",
+  ".txt",
+].join(",");
+
+function isPublicImageAttachment(
+  attachmentType: string | null | undefined,
+  attachmentName?: string | null,
+) {
+  if (attachmentType?.startsWith("image/")) {
+    return true;
+  }
+
+  return Boolean(
+    attachmentName?.match(
+      /\.(jpe?g|png|webp|gif)$/i,
+    ),
+  );
+}
+
+function formatPublicAttachmentSize(
+  size: number | null | undefined,
+) {
+  if (!size || size <= 0) return "";
+
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(size / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function publicAttachmentIcon(
+  attachmentType: string | null | undefined,
+  attachmentName?: string | null,
+) {
+  const name = attachmentName?.toLowerCase() ?? "";
+
+  if (
+    attachmentType === "application/pdf" ||
+    name.endsWith(".pdf")
+  ) {
+    return "📕";
+  }
+
+  if (
+    attachmentType?.includes("word") ||
+    attachmentType === "application/msword" ||
+    name.endsWith(".doc") ||
+    name.endsWith(".docx")
+  ) {
+    return "📘";
+  }
+
+  if (
+    attachmentType?.includes("excel") ||
+    attachmentType?.includes("spreadsheet") ||
+    name.endsWith(".xls") ||
+    name.endsWith(".xlsx")
+  ) {
+    return "📗";
+  }
+
+  if (
+    attachmentType?.includes("powerpoint") ||
+    attachmentType?.includes("presentation") ||
+    name.endsWith(".ppt") ||
+    name.endsWith(".pptx")
+  ) {
+    return "📙";
+  }
+
+  if (
+    attachmentType === "application/zip" ||
+    name.endsWith(".zip")
+  ) {
+    return "🗜️";
+  }
+
+  if (
+    attachmentType === "text/plain" ||
+    name.endsWith(".txt")
+  ) {
+    return "📄";
+  }
+
+  return "📎";
+}
+
 function safeFileName(fileName: string) {
   return fileName
     .normalize("NFD")
@@ -242,8 +393,14 @@ export default function Home() {
   );
   const [editingContent, setEditingContent] = useState("");
 
-  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
-  const [attachmentPreview, setAttachmentPreview] = useState("");
+  const [attachmentFile, setAttachmentFile] =
+    useState<File | null>(null);
+  const [attachmentPreview, setAttachmentPreview] =
+    useState("");
+  const [
+    showComposerEmojiPicker,
+    setShowComposerEmojiPicker,
+  ] = useState(false);
 
   const [authLoading, setAuthLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(true);
@@ -275,7 +432,11 @@ export default function Home() {
   const [reportDetails, setReportDetails] = useState("");
   const [submittingReport, setSubmittingReport] =
     useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(
+    null,
+  );
+  const documentInputRef =
+    useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const presenceChannelRef =
@@ -1021,7 +1182,7 @@ export default function Home() {
       const { data: messageData, error: messageError } = await supabase
         .from("messages")
         .select(
-          "id, user_id, username, content, channel, created_at, reply_to_id, attachment_url, attachment_name, edited_at",
+          "id, user_id, username, content, channel, created_at, reply_to_id, attachment_url, attachment_name, attachment_type, attachment_size, edited_at",
         )
         .eq("channel", selectedChannel)
         .order("created_at", { ascending: true })
@@ -1289,9 +1450,65 @@ export default function Home() {
   function selectChannel(channelId: string) {
     setSelectedChannel(channelId);
     setShowChannels(false);
+    setShowComposerEmojiPicker(false);
   }
 
-  function chooseAttachment(event: ChangeEvent<HTMLInputElement>) {
+  function validatePublicAttachment(
+    file: File,
+    mode: "image" | "document",
+  ) {
+    if (mode === "image") {
+      if (!allowedPublicImageTypes.has(file.type)) {
+        return "Chỉ hỗ trợ ảnh JPG, PNG, WEBP hoặc GIF.";
+      }
+
+      if (file.size > MAX_PUBLIC_IMAGE_SIZE) {
+        return "Ảnh phải nhỏ hơn hoặc bằng 5 MB.";
+      }
+
+      return "";
+    }
+
+    if (!allowedPublicFileTypes.has(file.type)) {
+      return "Chỉ hỗ trợ PDF, Word, Excel, PowerPoint, ZIP hoặc TXT.";
+    }
+
+    if (file.size > MAX_PUBLIC_FILE_SIZE) {
+      return "Tệp phải nhỏ hơn hoặc bằng 20 MB.";
+    }
+
+    return "";
+  }
+
+  function setPublicAttachment(
+    file: File,
+    mode: "image" | "document",
+  ) {
+    const validationError =
+      validatePublicAttachment(file, mode);
+
+    if (validationError) {
+      setErrorMessage(validationError);
+      return;
+    }
+
+    if (attachmentPreview) {
+      URL.revokeObjectURL(attachmentPreview);
+    }
+
+    setAttachmentFile(file);
+    setAttachmentPreview(
+      mode === "image"
+        ? URL.createObjectURL(file)
+        : "",
+    );
+    setShowComposerEmojiPicker(false);
+    setErrorMessage("");
+  }
+
+  function chooseImageAttachment(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
     if (isChatSuspended) {
       setErrorMessage(
         "Tài khoản của bạn đang bị khóa quyền chat.",
@@ -1301,28 +1518,30 @@ export default function Home() {
     }
 
     const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
 
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      setErrorMessage("Hiện tại chỉ hỗ trợ gửi file ảnh.");
+    setPublicAttachment(file, "image");
+  }
+
+  function chooseDocumentAttachment(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
+    if (isChatSuspended) {
+      setErrorMessage(
+        "Tài khoản của bạn đang bị khóa quyền chat.",
+      );
       event.target.value = "";
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      setErrorMessage("Ảnh phải nhỏ hơn hoặc bằng 5 MB.");
-      event.target.value = "";
-      return;
-    }
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
 
-    if (attachmentPreview) {
-      URL.revokeObjectURL(attachmentPreview);
-    }
+    if (!file) return;
 
-    setAttachmentFile(file);
-    setAttachmentPreview(URL.createObjectURL(file));
-    setErrorMessage("");
+    setPublicAttachment(file, "document");
   }
 
   function clearAttachment() {
@@ -1333,12 +1552,26 @@ export default function Home() {
     setAttachmentFile(null);
     setAttachmentPreview("");
 
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
+
+    if (documentInputRef.current) {
+      documentInputRef.current.value = "";
     }
   }
 
-  async function uploadChatImage(file: File) {
+  function insertComposerEmoji(emoji: string) {
+    setMessageInput((current) => {
+      const next = `${current}${emoji}`;
+      announceTyping(next);
+      return next;
+    });
+
+    setShowComposerEmojiPicker(false);
+  }
+
+  async function uploadChatAttachment(file: File) {
     const path = `${userId}/${Date.now()}-${safeFileName(file.name)}`;
 
     const { error } = await supabase.storage
@@ -1389,7 +1622,7 @@ export default function Home() {
       let uploadedUrl: string | null = null;
 
       if (attachmentFile) {
-        uploadedUrl = await uploadChatImage(attachmentFile);
+        uploadedUrl = await uploadChatAttachment(attachmentFile);
       }
 
       const { error } = await supabase.from("messages").insert({
@@ -1400,6 +1633,8 @@ export default function Home() {
         reply_to_id: replyingTo?.id ?? null,
         attachment_url: uploadedUrl,
         attachment_name: attachmentFile?.name ?? null,
+        attachment_type: attachmentFile?.type ?? null,
+        attachment_size: attachmentFile?.size ?? null,
       });
 
       if (error) {
@@ -1409,6 +1644,7 @@ export default function Home() {
       setMessageInput("");
       setReplyingTo(null);
       clearAttachment();
+      setShowComposerEmojiPicker(false);
       announceTyping("");
     } catch (error) {
       setErrorMessage(
@@ -2154,12 +2390,17 @@ export default function Home() {
                             </p>
                           )}
 
-                          {message.attachment_url && (
+                          {message.attachment_url &&
+                          isPublicImageAttachment(
+                            message.attachment_type,
+                            message.attachment_name,
+                          ) ? (
                             <a
                               href={message.attachment_url}
                               target="_blank"
                               rel="noreferrer"
                               className="mt-2 block max-w-xl"
+                              title="Mở ảnh"
                             >
                               <img
                                 src={message.attachment_url}
@@ -2168,9 +2409,45 @@ export default function Home() {
                                   "Ảnh đính kèm"
                                 }
                                 className="max-h-80 max-w-full rounded-lg object-contain"
+                                loading="lazy"
                               />
                             </a>
-                          )}
+                          ) : message.attachment_url ? (
+                            <a
+                              href={message.attachment_url}
+                              download={
+                                message.attachment_name ??
+                                undefined
+                              }
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 flex max-w-xl items-center gap-3 rounded-xl border border-white/10 bg-black/15 p-3 transition hover:bg-black/25"
+                              title="Tải tệp xuống"
+                            >
+                              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10 text-2xl">
+                                {publicAttachmentIcon(
+                                  message.attachment_type,
+                                  message.attachment_name,
+                                )}
+                              </span>
+
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-semibold text-white">
+                                  {message.attachment_name ??
+                                    "Tệp đính kèm"}
+                                </span>
+                                <span className="mt-0.5 block text-xs text-gray-400">
+                                  {formatPublicAttachmentSize(
+                                    message.attachment_size,
+                                  ) || "Tệp đính kèm"}
+                                </span>
+                              </span>
+
+                              <span className="shrink-0 rounded-lg bg-white/10 px-2.5 py-1.5 text-xs font-bold text-white">
+                                Tải xuống
+                              </span>
+                            </a>
+                          ) : null}
                         </>
                       )}
 
@@ -2425,47 +2702,150 @@ export default function Home() {
             </div>
           )}
 
-          {attachmentPreview && (
-            <div className="relative w-fit bg-[#2b2d31] p-3">
-              <img
-                src={attachmentPreview}
-                alt="Ảnh sắp gửi"
-                className="max-h-32 rounded object-contain"
-              />
+          {attachmentFile && (
+            <div className="mb-2 flex max-w-xl items-center gap-3 rounded-xl border border-white/10 bg-[#2b2d31] p-3">
+              {attachmentPreview ? (
+                <img
+                  src={attachmentPreview}
+                  alt="Ảnh sắp gửi"
+                  className="h-20 w-20 rounded-xl object-cover"
+                />
+              ) : (
+                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/10 text-3xl">
+                  {publicAttachmentIcon(
+                    attachmentFile.type,
+                    attachmentFile.name,
+                  )}
+                </span>
+              )}
+
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold">
+                  {attachmentFile.name}
+                </p>
+                <p className="mt-1 text-xs text-gray-400">
+                  {formatPublicAttachmentSize(
+                    attachmentFile.size,
+                  )}
+                </p>
+              </div>
 
               <button
                 type="button"
                 onClick={clearAttachment}
-                className="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-1 text-xs"
+                title="Bỏ tệp đã chọn"
+                aria-label="Bỏ tệp đã chọn"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-red-500/15 text-lg text-red-300 hover:bg-red-500/25"
               >
-                ✕
+                ×
               </button>
             </div>
           )}
 
           <form onSubmit={sendMessage}>
-            <div className="flex items-center rounded-lg bg-[#383a40] px-3 md:px-4">
+            <div className="flex items-center rounded-lg bg-[#383a40] px-2 md:px-3">
               <input
-                ref={fileInputRef}
+                ref={documentInputRef}
                 type="file"
-                accept="image/*"
-                onChange={chooseAttachment}
+                accept={PUBLIC_FILE_ACCEPT}
+                onChange={chooseDocumentAttachment}
+                className="hidden"
+              />
+
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                onChange={chooseImageAttachment}
                 className="hidden"
               />
 
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isChatSuspended}
-                className="mr-3 text-2xl text-gray-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() =>
+                  documentInputRef.current?.click()
+                }
+                disabled={isChatSuspended || sending}
+                aria-label="Gửi tệp"
+                title={
+                  isChatSuspended
+                    ? "Tài khoản đang bị khóa chat"
+                    : "Gửi PDF, Word, Excel, PowerPoint, ZIP hoặc TXT"
+                }
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl text-gray-300 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                📎
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  imageInputRef.current?.click()
+                }
+                disabled={isChatSuspended || sending}
+                aria-label="Gửi ảnh"
                 title={
                   isChatSuspended
                     ? "Tài khoản đang bị khóa chat"
                     : "Gửi ảnh"
                 }
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl text-gray-300 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
-                +
+                🖼️
               </button>
+
+              <div className="relative flex shrink-0 items-center">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowComposerEmojiPicker(
+                      (current) => !current,
+                    )
+                  }
+                  disabled={isChatSuspended}
+                  aria-label="Chọn biểu tượng cảm xúc"
+                  aria-expanded={showComposerEmojiPicker}
+                  title="Biểu tượng cảm xúc"
+                  className="flex h-10 w-10 items-center justify-center rounded-full text-xl text-gray-300 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  😊
+                </button>
+
+                {showComposerEmojiPicker && (
+                  <div className="absolute bottom-12 left-0 z-50 w-72 rounded-2xl border border-white/10 bg-[#1e1f22] p-3 shadow-2xl">
+                    <div className="mb-2 flex items-center justify-between">
+                      <strong className="text-sm">
+                        Biểu tượng cảm xúc
+                      </strong>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowComposerEmojiPicker(false)
+                        }
+                        aria-label="Đóng bảng cảm xúc"
+                        className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-lg text-gray-300 hover:bg-white/15 hover:text-white"
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-8 gap-1">
+                      {composerEmojiChoices.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() =>
+                            insertComposerEmoji(emoji)
+                          }
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-xl hover:bg-white/10"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <input
                 value={messageInput}
@@ -2485,7 +2865,9 @@ export default function Home() {
                 disabled={
                   sending ||
                   messagesLoading ||
-                  isChatSuspended
+                  isChatSuspended ||
+                  (!messageInput.trim() &&
+                    !attachmentFile)
                 }
                 className="ml-3 rounded bg-indigo-500 px-3 py-1.5 text-sm font-semibold disabled:opacity-50"
               >
