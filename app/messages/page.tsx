@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ChangeEvent,
   FormEvent,
   useEffect,
   useMemo,
@@ -39,6 +40,77 @@ type GlobalPresenceWindow = Window &
 const GLOBAL_PRESENCE_EVENT =
   "talk-global-presence-sync";
 
+
+const PRIVATE_MESSAGE_MEDIA_BUCKET =
+  "private-message-media";
+const MAX_PRIVATE_IMAGE_SIZE = 5 * 1024 * 1024;
+
+const allowedPrivateImageTypes = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+
+function privateImageExtension(file: File) {
+  const extensionByType: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+  };
+
+  return extensionByType[file.type] ?? "img";
+}
+
+function createPrivateMediaId() {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+}
+
+async function addSignedImageUrl(
+  message: DirectMessageRow,
+): Promise<DirectMessageRow> {
+  if (!message.attachment_path) {
+    return {
+      ...message,
+      attachment_url: null,
+    };
+  }
+
+  const { data, error } = await supabase.storage
+    .from(PRIVATE_MESSAGE_MEDIA_BUCKET)
+    .createSignedUrl(
+      message.attachment_path,
+      12 * 60 * 60,
+    );
+
+  return {
+    ...message,
+    attachment_url: error
+      ? null
+      : data?.signedUrl ?? null,
+  };
+}
+
+async function addSignedImageUrls(
+  rows: DirectMessageRow[],
+) {
+  return Promise.all(
+    rows.map((message) =>
+      addSignedImageUrl(message),
+    ),
+  );
+}
+
 type DirectMessageRow = {
   id: number;
   sender_id: string;
@@ -47,6 +119,16 @@ type DirectMessageRow = {
   created_at: string;
   edited_at: string | null;
   read_at: string | null;
+  attachment_path: string | null;
+  attachment_name: string | null;
+  attachment_type: string | null;
+  attachment_size: number | null;
+  attachment_url?: string | null;
+};
+
+type ImageViewerState = {
+  url: string;
+  name: string;
 };
 
 type SuspensionRow = {
@@ -401,7 +483,7 @@ function showPrivateMessageNotification({
   const notification = new Notification(
     `Tin nhắn từ ${senderName}`,
     {
-      body: content,
+      body: content.trim() || "📷 Đã gửi một ảnh",
       icon: "/icon.png",
       tag: `private-message-${messageId}`,
     },
@@ -474,6 +556,14 @@ export default function MessagesPage() {
   ] = useState<number | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] =
     useState(false);
+  const [selectedImageFile, setSelectedImageFile] =
+    useState<File | null>(null);
+  const [
+    selectedImagePreview,
+    setSelectedImagePreview,
+  ] = useState("");
+  const [imageViewer, setImageViewer] =
+    useState<ImageViewerState | null>(null);
 
   const [suspension, setSuspension] =
     useState<SuspensionRow | null>(null);
@@ -524,6 +614,9 @@ export default function MessagesPage() {
   const profilesRef = useRef<ProfileRow[]>([]);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messageInputRef = useRef<HTMLInputElement | null>(
+    null,
+  );
+  const imageInputRef = useRef<HTMLInputElement | null>(
     null,
   );
   const privateChatPreferencesRef = useRef<
@@ -585,6 +678,14 @@ export default function MessagesPage() {
     privateChatPreferencesRef.current =
       privateChatPreferences;
   }, [privateChatPreferences]);
+
+  useEffect(() => {
+    return () => {
+      if (selectedImagePreview) {
+        URL.revokeObjectURL(selectedImagePreview);
+      }
+    };
+  }, [selectedImagePreview]);
 
   useEffect(() => {
     function closeFloatingMenus(event: MouseEvent) {
@@ -974,12 +1075,14 @@ export default function MessagesPage() {
             schema: "public",
             table: "direct_messages",
           },
-          (payload) => {
+          async (payload) => {
             if (!active) return;
 
             if (payload.eventType === "INSERT") {
               const newMessage =
-                payload.new as DirectMessageRow;
+                await addSignedImageUrl(
+                  payload.new as DirectMessageRow,
+                );
               const selected =
                 selectedProfileRef.current;
 
@@ -1019,7 +1122,9 @@ export default function MessagesPage() {
                       senderName:
                         senderProfile?.username ??
                         "một thành viên",
-                      content: newMessage.content,
+                      content:
+                        newMessage.content.trim() ||
+                        "📷 Đã gửi một ảnh",
                     });
                   }
                 }
@@ -1068,7 +1173,9 @@ export default function MessagesPage() {
 
             if (payload.eventType === "UPDATE") {
               const updatedMessage =
-                payload.new as DirectMessageRow;
+                await addSignedImageUrl(
+                  payload.new as DirectMessageRow,
+                );
 
               setMessages((current) =>
                 current.map((message) =>
@@ -1378,6 +1485,8 @@ export default function MessagesPage() {
       setCallHistory([]);
       setEditingId(null);
       setEditingContent("");
+      setSelectedImageFile(null);
+      setSelectedImagePreview("");
       setErrorMessage("");
 
       const [
@@ -1390,7 +1499,7 @@ export default function MessagesPage() {
         supabase
           .from("direct_messages")
           .select(
-            "id, sender_id, receiver_id, content, created_at, edited_at, read_at",
+            "id, sender_id, receiver_id, content, created_at, edited_at, read_at, attachment_path, attachment_name, attachment_type, attachment_size",
           )
           .or(
             `and(sender_id.eq.${currentUserId},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${currentUserId})`,
@@ -1428,7 +1537,12 @@ export default function MessagesPage() {
           `Không thể tải cuộc trò chuyện: ${error.message}`,
         );
       } else {
-        const loadedMessages = data ?? [];
+        const loadedMessages =
+          await addSignedImageUrls(
+            (data ?? []) as DirectMessageRow[],
+          );
+
+        if (!active) return;
         setMessages(loadedMessages);
 
         const { error: readError } = await supabase.rpc(
@@ -1548,6 +1662,8 @@ export default function MessagesPage() {
     setShowPrivateChatSettings(false);
     setOpenMessageMenuId(null);
     setShowEmojiPicker(false);
+    setSelectedImageFile(null);
+    setSelectedImagePreview("");
     setMessageInput("");
 
     const nextUrl = `/messages?user=${encodeURIComponent(
@@ -1583,15 +1699,55 @@ export default function MessagesPage() {
     });
   }
 
+  function clearSelectedImage() {
+    setSelectedImageFile(null);
+    setSelectedImagePreview("");
+
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
+  }
+
+  function selectPrivateImage(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+
+    if (!file) return;
+
+    if (!allowedPrivateImageTypes.has(file.type)) {
+      setErrorMessage(
+        "Chỉ hỗ trợ ảnh JPG, PNG, WEBP hoặc GIF.",
+      );
+      return;
+    }
+
+    if (file.size > MAX_PRIVATE_IMAGE_SIZE) {
+      setErrorMessage(
+        "Ảnh vượt quá giới hạn 5 MB.",
+      );
+      return;
+    }
+
+    setErrorMessage("");
+    setSelectedImageFile(file);
+    setSelectedImagePreview(
+      URL.createObjectURL(file),
+    );
+    setShowEmojiPicker(false);
+  }
+
   async function sendMessage(
     event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
 
     const content = messageInput.trim();
+    const imageFile = selectedImageFile;
 
     if (
-      !content ||
+      (!content && !imageFile) ||
       !currentUserId ||
       !selectedProfile ||
       sending
@@ -1616,15 +1772,57 @@ export default function MessagesPage() {
     setSending(true);
     setErrorMessage("");
 
+    let uploadedPath = "";
+
+    if (imageFile) {
+      const extension =
+        privateImageExtension(imageFile);
+
+      uploadedPath = `${currentUserId}/${
+        selectedProfile.id
+      }/${Date.now()}-${createPrivateMediaId()}.${extension}`;
+
+      const { error: uploadError } =
+        await supabase.storage
+          .from(PRIVATE_MESSAGE_MEDIA_BUCKET)
+          .upload(uploadedPath, imageFile, {
+            cacheControl: "3600",
+            contentType: imageFile.type,
+            upsert: false,
+          });
+
+      if (uploadError) {
+        setErrorMessage(
+          `Không thể tải ảnh lên: ${uploadError.message}`,
+        );
+        setSending(false);
+        return;
+      }
+    }
+
     const { error } = await supabase
       .from("direct_messages")
       .insert({
         sender_id: currentUserId,
         receiver_id: selectedProfile.id,
         content,
+        attachment_path:
+          uploadedPath || null,
+        attachment_name:
+          imageFile?.name ?? null,
+        attachment_type:
+          imageFile?.type ?? null,
+        attachment_size:
+          imageFile?.size ?? null,
       });
 
     if (error) {
+      if (uploadedPath) {
+        await supabase.storage
+          .from(PRIVATE_MESSAGE_MEDIA_BUCKET)
+          .remove([uploadedPath]);
+      }
+
       const blockedByOther =
         error.message.toLocaleLowerCase("vi").includes(
           "row-level security",
@@ -1637,6 +1835,7 @@ export default function MessagesPage() {
       );
     } else {
       setMessageInput("");
+      clearSelectedImage();
     }
 
     setSending(false);
@@ -1911,6 +2110,10 @@ export default function MessagesPage() {
       return;
     }
 
+    const messageToDelete = messages.find(
+      (message) => message.id === messageId,
+    );
+
     setWorkingId(messageId);
     setErrorMessage("");
 
@@ -1930,6 +2133,21 @@ export default function MessagesPage() {
           (message) => message.id !== messageId,
         ),
       );
+
+      if (messageToDelete?.attachment_path) {
+        const { error: removeError } =
+          await supabase.storage
+            .from(PRIVATE_MESSAGE_MEDIA_BUCKET)
+            .remove([
+              messageToDelete.attachment_path,
+            ]);
+
+        if (removeError) {
+          setErrorMessage(
+            "Tin nhắn đã được xóa nhưng ảnh chưa được dọn khỏi kho lưu trữ.",
+          );
+        }
+      }
     }
 
     setWorkingId(null);
@@ -2548,9 +2766,49 @@ export default function MessagesPage() {
                               </div>
                             ) : (
                               <>
-                                <p className="whitespace-pre-wrap break-words">
-                                  {message.content}
-                                </p>
+                                {message.attachment_url ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setImageViewer({
+                                        url:
+                                          message.attachment_url ??
+                                          "",
+                                        name:
+                                          message.attachment_name ??
+                                          "Ảnh",
+                                      })
+                                    }
+                                    className="block max-w-full overflow-hidden rounded-xl bg-black/15"
+                                    title="Bấm để xem ảnh lớn"
+                                  >
+                                    <img
+                                      src={message.attachment_url}
+                                      alt={
+                                        message.attachment_name ??
+                                        "Ảnh trong tin nhắn"
+                                      }
+                                      className="max-h-96 w-auto max-w-full object-contain"
+                                      loading="lazy"
+                                    />
+                                  </button>
+                                ) : message.attachment_path ? (
+                                  <div className="rounded-xl bg-black/15 px-4 py-3 text-sm text-white/75">
+                                    Không thể tải ảnh. Hãy làm mới trang để thử lại.
+                                  </div>
+                                ) : null}
+
+                                {message.content.trim() && (
+                                  <p
+                                    className={`whitespace-pre-wrap break-words ${
+                                      message.attachment_path
+                                        ? "mt-2"
+                                        : ""
+                                    }`}
+                                  >
+                                    {message.content}
+                                  </p>
+                                )}
 
                                 <div
                                   className={`mt-1 text-[11px] ${
@@ -2609,16 +2867,18 @@ export default function MessagesPage() {
                                 {openMessageMenuId ===
                                   message.id && (
                                   <div className="absolute right-0 top-8 z-40 min-w-32 overflow-hidden rounded-xl border border-white/10 bg-[#1e1f22] py-1 shadow-2xl">
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        beginEditing(message)
-                                      }
-                                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-white/10"
-                                    >
-                                      <span>✏️</span>
-                                      <span>Sửa</span>
-                                    </button>
+                                    {message.content.trim() && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          beginEditing(message)
+                                        }
+                                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-white/10"
+                                      >
+                                        <span>✏️</span>
+                                        <span>Sửa</span>
+                                      </button>
+                                    )}
 
                                     <button
                                       type="button"
@@ -2654,7 +2914,66 @@ export default function MessagesPage() {
               onSubmit={sendMessage}
               className="shrink-0 border-t border-black/20 bg-[#313338] p-3 md:p-4"
             >
+              {selectedImagePreview && (
+                <div className="mb-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-[#2b2d31] p-3">
+                  <img
+                    src={selectedImagePreview}
+                    alt="Ảnh chuẩn bị gửi"
+                    className="h-20 w-20 rounded-xl object-cover"
+                  />
+
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">
+                      {selectedImageFile?.name}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">
+                      {selectedImageFile
+                        ? `${(
+                            selectedImageFile.size /
+                            1024 /
+                            1024
+                          ).toFixed(2)} MB`
+                        : ""}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={clearSelectedImage}
+                    aria-label="Bỏ ảnh đã chọn"
+                    title="Bỏ ảnh"
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-red-500/15 text-red-300 hover:bg-red-500/25"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
               <div className="flex items-center rounded-xl bg-[#383a40] px-2">
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={selectPrivateImage}
+                  className="hidden"
+                />
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    imageInputRef.current?.click()
+                  }
+                  disabled={
+                    sending ||
+                    isSuspended ||
+                    isSelectedBlocked
+                  }
+                  aria-label="Chọn ảnh"
+                  title="Gửi ảnh"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  🖼️
+                </button>
                 <div
                   className="relative flex shrink-0 items-center"
                   data-emoji-picker
@@ -2742,7 +3061,8 @@ export default function MessagesPage() {
                     sending ||
                     isSuspended ||
                     isSelectedBlocked ||
-                    !messageInput.trim()
+                    !messageInput.trim() &&
+                    !selectedImageFile
                   }
                   className="my-1.5 ml-2 rounded-lg px-4 py-2 text-sm font-semibold transition hover:brightness-110 disabled:opacity-50"
                   style={{
@@ -2777,6 +3097,37 @@ export default function MessagesPage() {
           </div>
         )}
       </section>
+
+      {imageViewer && (
+        <div
+          className="fixed inset-0 z-[190] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Xem ảnh"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setImageViewer(null);
+            }
+          }}
+        >
+          <section className="relative flex max-h-[92vh] max-w-[94vw] items-center justify-center">
+            <img
+              src={imageViewer.url}
+              alt={imageViewer.name}
+              className="max-h-[88vh] max-w-[92vw] rounded-2xl object-contain shadow-2xl"
+            />
+
+            <button
+              type="button"
+              onClick={() => setImageViewer(null)}
+              aria-label="Đóng ảnh"
+              className="absolute -right-3 -top-3 flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-[#1e1f22] text-2xl text-white shadow-xl hover:bg-[#111214]"
+            >
+              ×
+            </button>
+          </section>
+        </div>
+      )}
 
       {showPrivateChatSettings && selectedProfile && (
         <div
