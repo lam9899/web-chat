@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { createClient } from "@/utils/supabase/client";
+import { sendPushToUser } from "@/utils/push-notifications";
 import MemberBadge, {
   formatPublicId,
   type MemberRole,
