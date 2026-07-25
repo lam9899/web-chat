@@ -2966,11 +2966,19 @@ export default function MessagesPage() {
                     isSuspended
                   }
                   title="Gọi thoại"
-                  className="rounded bg-green-600 px-3 py-2 text-sm font-semibold hover:bg-green-500 disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="Gọi thoại"
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white shadow-sm transition hover:scale-[1.03] hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {startingCallType === "audio"
-                    ? "..."
-                    : "📞"}
+                  {startingCallType === "audio" ? (
+                    <span className="text-sm font-bold text-slate-700">...</span>
+                  ) : (
+                    <img
+                      src="/icons/call-phone-blue.png"
+                      alt=""
+                      aria-hidden="true"
+                      className="h-5 w-5 object-contain"
+                    />
+                  )}
                 </button>
 
                 <button
@@ -2982,39 +2990,34 @@ export default function MessagesPage() {
                     isSuspended
                   }
                   title="Gọi video"
-                  className="rounded px-3 py-2 text-sm font-semibold transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-                  style={{
-                    backgroundColor: activeChatColor.hex,
-                  }}
+                  aria-label="Gọi video"
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white shadow-sm transition hover:scale-[1.03] hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {startingCallType === "video"
-                    ? "..."
-                    : "🎥"}
+                  {startingCallType === "video" ? (
+                    <span className="text-sm font-bold text-slate-700">...</span>
+                  ) : (
+                    <img
+                      src="/icons/call-video-blue.png"
+                      alt=""
+                      aria-hidden="true"
+                      className="h-5 w-5 object-contain"
+                    />
+                  )}
                 </button>
 
                 <button
                   type="button"
                   onClick={openPrivateChatSettings}
-                  title="Cài đặt cuộc trò chuyện"
-                  aria-label="Cài đặt cuộc trò chuyện"
-                  className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/15"
-                  style={{
-                    boxShadow: `inset 0 0 0 1px ${activeChatColor.border}`,
-                  }}
+                  title="Thông tin cuộc trò chuyện"
+                  aria-label="Thông tin cuộc trò chuyện"
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white shadow-sm transition hover:scale-[1.03] hover:bg-slate-100"
                 >
-                  <svg
-                    viewBox="0 0 24 24"
+                  <img
+                    src="/icons/call-info-blue.png"
+                    alt=""
                     aria-hidden="true"
-                    className="h-5 w-5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-3v-.08a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7 15.4a1.7 1.7 0 0 0-1.56-1.03H5.3v-3h.14A1.7 1.7 0 0 0 7 10.34a1.7 1.7 0 0 0-.34-1.88L6.6 8.4l2.12-2.12.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 11.7 5.1V5h3v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.14v3h-.14A1.7 1.7 0 0 0 19.4 15Z" />
-                  </svg>
+                    className="h-5 w-5 object-contain"
+                  />
                 </button>
               </div>
             </header>
