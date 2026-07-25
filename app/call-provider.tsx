@@ -38,6 +38,17 @@ type CallerProfile = {
   avatar_url: string | null;
 };
 
+type GlobalPresenceProfile = {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+  public_id: number | null;
+};
+
+type GlobalPresenceRole = {
+  role: "admin" | "moderator" | "member";
+};
+
 export default function CallProvider({
   children,
 }: {
@@ -56,6 +67,133 @@ export default function CallProvider({
   const incomingCallRef =
     useRef<CallSessionRow | null>(null);
   const lastNotifiedCallId = useRef("");
+
+  // Giữ trạng thái online xuyên suốt toàn bộ website, kể cả khi
+  // chuyển từ chat chung sang tin nhắn riêng hoặc trang gọi điện.
+  useEffect(() => {
+    let active = true;
+    let presenceChannel:
+      | ReturnType<typeof supabase.channel>
+      | null = null;
+    let heartbeatTimer: number | null = null;
+
+    async function initializeGlobalPresence() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user || !active) return;
+
+      const [profileResponse, roleResponse] =
+        await Promise.all([
+          supabase
+            .from("profiles")
+            .select(
+              "id, username, avatar_url, public_id",
+            )
+            .eq("id", user.id)
+            .maybeSingle(),
+          supabase
+            .from("user_roles")
+            .select("role")
+            .eq("user_id", user.id)
+            .maybeSingle(),
+        ]);
+
+      if (!active) return;
+
+      const profile =
+        profileResponse.data as GlobalPresenceProfile | null;
+      const role =
+        roleResponse.data as GlobalPresenceRole | null;
+      const displayName =
+        profile?.username ??
+        user.user_metadata?.username ??
+        user.email?.split("@")[0] ??
+        "Thành viên";
+
+      async function touchPresence() {
+        await supabase.rpc("touch_my_presence");
+      }
+
+      await touchPresence();
+
+      presenceChannel = supabase.channel(
+        "online-users-global",
+        {
+          config: {
+            presence: {
+              key: user.id,
+            },
+          },
+        },
+      );
+
+      presenceChannel.subscribe(async (status) => {
+        if (status !== "SUBSCRIBED" || !presenceChannel) {
+          return;
+        }
+
+        await presenceChannel.track({
+          user_id: user.id,
+          username: displayName,
+          avatar_url: profile?.avatar_url ?? "",
+          public_id: profile?.public_id ?? 0,
+          role: role?.role ?? "member",
+          online_at: new Date().toISOString(),
+        });
+      });
+
+      heartbeatTimer = window.setInterval(() => {
+        void touchPresence();
+      }, 30_000);
+
+      const handleVisibility = () => {
+        if (document.visibilityState === "visible") {
+          void touchPresence();
+        }
+      };
+
+      const handleOnline = () => {
+        void touchPresence();
+      };
+
+      document.addEventListener(
+        "visibilitychange",
+        handleVisibility,
+      );
+      window.addEventListener("online", handleOnline);
+
+      return () => {
+        document.removeEventListener(
+          "visibilitychange",
+          handleVisibility,
+        );
+        window.removeEventListener("online", handleOnline);
+      };
+    }
+
+    let removeWindowListeners:
+      | (() => void)
+      | undefined;
+
+    void initializeGlobalPresence().then((cleanup) => {
+      removeWindowListeners = cleanup;
+    });
+
+    return () => {
+      active = false;
+      removeWindowListeners?.();
+
+      if (heartbeatTimer !== null) {
+        window.clearInterval(heartbeatTimer);
+      }
+
+      if (presenceChannel) {
+        void supabase.removeChannel(presenceChannel);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     incomingCallRef.current = incomingCall;

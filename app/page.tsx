@@ -45,6 +45,7 @@ type MemberCard = {
   avatar_url: string | null;
   public_id: number;
   role: MemberRole;
+  last_seen_at: string | null;
 };
 
 type OnlineUser = {
@@ -54,6 +55,7 @@ type OnlineUser = {
   public_id: number;
   role: MemberRole;
   online_at: string;
+  last_seen_at?: string | null;
 };
 
 type ChannelItem = {
@@ -163,6 +165,34 @@ function safeFileName(fileName: string) {
     .toLowerCase();
 }
 
+function formatLastActive(
+  lastSeenAt: string | null | undefined,
+  now: number,
+) {
+  if (!lastSeenAt) return "Chưa có hoạt động gần đây";
+
+  const lastSeenTime = new Date(lastSeenAt).getTime();
+  const difference = Math.max(0, now - lastSeenTime);
+  const minutes = Math.floor(difference / 60_000);
+
+  if (minutes < 1) return "Hoạt động vừa xong";
+  if (minutes < 60) return `Hoạt động ${minutes} phút trước`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Hoạt động ${hours} giờ trước`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `Hoạt động ${days} ngày trước`;
+
+  return `Hoạt động ${new Date(lastSeenAt).toLocaleString(
+    "vi-VN",
+    {
+      dateStyle: "short",
+      timeStyle: "short",
+    },
+  )}`;
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [channels, setChannels] =
@@ -254,6 +284,35 @@ export default function Home() {
     [selectedChannel],
   );
 
+  const onlineUserIds = useMemo(
+    () =>
+      new Set(
+        onlineUsers.map((member) => member.user_id),
+      ),
+    [onlineUsers],
+  );
+
+  const sidebarMembers = useMemo(() => {
+    return Object.values(memberCards)
+      .filter(
+        (member) =>
+          member.id === userId || friendIds.has(member.id),
+      )
+      .sort((firstMember, secondMember) => {
+        const firstOnline = onlineUserIds.has(firstMember.id);
+        const secondOnline = onlineUserIds.has(secondMember.id);
+
+        if (firstOnline !== secondOnline) {
+          return firstOnline ? -1 : 1;
+        }
+
+        return firstMember.username.localeCompare(
+          secondMember.username,
+          "vi",
+        );
+      });
+  }, [friendIds, memberCards, onlineUserIds, userId]);
+
   const isChatSuspended = useMemo(() => {
     if (!suspension) return false;
 
@@ -343,7 +402,9 @@ export default function Home() {
     const [{ data: profiles }, { data: roles }] = await Promise.all([
       supabase
         .from("profiles")
-        .select("id, username, avatar_url, public_id")
+        .select(
+              "id, username, avatar_url, public_id, last_seen_at",
+            )
         .in("id", uniqueIds),
       supabase
         .from("user_roles")
@@ -368,6 +429,7 @@ export default function Home() {
           username: string;
           avatar_url: string | null;
           public_id: number;
+          last_seen_at: string | null;
         },
       ) => {
         current[profile.id] = {
@@ -376,6 +438,7 @@ export default function Home() {
           avatar_url: profile.avatar_url,
           public_id: profile.public_id,
           role: roleMap.get(profile.id) ?? "member",
+          last_seen_at: profile.last_seen_at,
         };
         return current;
       },
@@ -431,7 +494,9 @@ export default function Home() {
       ] = await Promise.all([
           supabase
             .from("profiles")
-            .select("id, username, avatar_url, public_id")
+            .select(
+              "id, username, avatar_url, public_id, last_seen_at",
+            )
             .eq("id", authenticatedUserId)
             .maybeSingle(),
           supabase
@@ -468,6 +533,7 @@ export default function Home() {
         avatar_url: string | null;
         public_id: number;
         role: MemberRole;
+        last_seen_at: string | null;
       }>;
       const friendIdSet = new Set(
         friends.map((friend) => friend.id),
@@ -485,6 +551,8 @@ export default function Home() {
           avatar_url: currentAvatar || null,
           public_id: currentPublicId,
           role: currentRole,
+          last_seen_at:
+            profileResponse.data?.last_seen_at ?? null,
         },
       };
 
@@ -574,6 +642,49 @@ export default function Home() {
           if (payload.eventType === "DELETE") {
             setSuspension(null);
           }
+        },
+      );
+
+      onlineChannel.on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "profiles",
+        },
+        (payload) => {
+          if (!isActive) return;
+
+          const updatedProfile = payload.new as {
+            id: string;
+            username: string;
+            avatar_url: string | null;
+            public_id: number;
+            last_seen_at: string | null;
+          };
+
+          if (!memberCardsRef.current[updatedProfile.id]) {
+            return;
+          }
+
+          setMemberCards((current) => {
+            const existing = current[updatedProfile.id];
+            if (!existing) return current;
+
+            const next = {
+              ...current,
+              [updatedProfile.id]: {
+                ...existing,
+                username: updatedProfile.username,
+                avatar_url: updatedProfile.avatar_url,
+                public_id: updatedProfile.public_id,
+                last_seen_at: updatedProfile.last_seen_at,
+              },
+            };
+
+            memberCardsRef.current = next;
+            return next;
+          });
         },
       );
 
@@ -671,6 +782,7 @@ export default function Home() {
             avatar_url: string | null;
             public_id: number;
             role: MemberRole;
+            last_seen_at: string | null;
           }>;
           const nextIds = new Set(
             nextFriends.map((friend) => friend.id),
@@ -720,6 +832,8 @@ export default function Home() {
                 card?.avatar_url ?? member.avatar_url,
               public_id: card?.public_id ?? member.public_id ?? 0,
               role: card?.role ?? member.role ?? "member",
+              last_seen_at:
+                card?.last_seen_at ?? member.last_seen_at ?? null,
             } as OnlineUser;
           });
 
@@ -2336,7 +2450,7 @@ export default function Home() {
       >
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-xs font-bold uppercase text-gray-400">
-            Đang online — {onlineUsers.length}
+            Bạn bè — {onlineUsers.length} online
           </h2>
 
           <button
@@ -2358,55 +2472,76 @@ export default function Home() {
           </p>
         </div>
 
-        {onlineUsers.map((member) => (
-          <button
-            key={member.user_id}
-            type="button"
-            onClick={() => {
-              window.location.href =
-                member.user_id === userId
-                  ? "/settings"
-                  : `/messages?user=${encodeURIComponent(
-                      member.user_id,
-                    )}`;
-            }}
-            className="mb-1 flex w-full items-center gap-3 rounded p-2 text-left text-gray-300 hover:bg-white/5"
-          >
-            <div className="relative">
-              {member.avatar_url ? (
-                <img
-                  src={member.avatar_url}
-                  alt={member.username}
-                  className="h-9 w-9 rounded-full object-cover"
+        {sidebarMembers.map((member) => {
+          const isOnline = onlineUserIds.has(member.id);
+
+          return (
+            <button
+              key={member.id}
+              type="button"
+              onClick={() => {
+                window.location.href =
+                  member.id === userId
+                    ? "/settings"
+                    : `/messages?user=${encodeURIComponent(
+                        member.id,
+                      )}`;
+              }}
+              className={`mb-1 flex w-full items-center gap-3 rounded p-2 text-left transition hover:bg-white/5 ${
+                isOnline
+                  ? "text-gray-200"
+                  : "text-gray-500 opacity-60"
+              }`}
+            >
+              <div className="relative shrink-0">
+                {member.avatar_url ? (
+                  <img
+                    src={member.avatar_url}
+                    alt={member.username}
+                    className={`h-9 w-9 rounded-full object-cover ${
+                      isOnline ? "" : "grayscale"
+                    }`}
+                  />
+                ) : (
+                  <div
+                    className={`flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold ${
+                      isOnline ? "" : "grayscale"
+                    }`}
+                  >
+                    {member.username.charAt(0).toUpperCase()}
+                  </div>
+                )}
+
+                <span
+                  className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] ${
+                    isOnline ? "bg-green-500" : "bg-gray-600"
+                  }`}
                 />
-              ) : (
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold">
-                  {member.username.charAt(0).toUpperCase()}
-                </div>
-              )}
+              </div>
 
-              <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] bg-green-500" />
-            </div>
-
-            <span className="min-w-0 flex-1">
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate font-medium">
-                  {member.username}
+              <span className="min-w-0 flex-1">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate font-medium">
+                    {member.username}
+                  </span>
+                  <MemberBadge role={member.role} />
                 </span>
-                <MemberBadge role={member.role} />
+                <span className="mt-0.5 block truncate text-[11px] text-gray-500">
+                  {formatPublicId(member.public_id)} · {isOnline
+                    ? "Đang online"
+                    : formatLastActive(
+                        member.last_seen_at,
+                        clock,
+                      )}
+                </span>
               </span>
-              <span className="mt-0.5 block text-xs text-gray-500">
-                {formatPublicId(member.public_id)}
-              </span>
-            </span>
 
-            <span className="text-xs text-gray-500">
-              {member.user_id === userId
-                ? "Bạn"
-                : "Nhắn tin"}
-            </span>
-          </button>
-        ))}
+              <span className="text-[11px] text-gray-500">
+                {member.id === userId ? "Bạn" : "Nhắn tin"}
+              </span>
+            </button>
+          );
+        })}
       </aside>
 
       {reportingMessage && (

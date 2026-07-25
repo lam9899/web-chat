@@ -24,6 +24,7 @@ type ProfileRow = {
   public_id: number;
   role: MemberRole;
   created_at: string;
+  last_seen_at: string | null;
 };
 
 type DirectMessageRow = {
@@ -403,9 +404,42 @@ function showPrivateMessageNotification({
   };
 }
 
+function formatLastActive(
+  lastSeenAt: string | null | undefined,
+  now: number,
+) {
+  if (!lastSeenAt) return "Chưa có hoạt động gần đây";
+
+  const difference = Math.max(
+    0,
+    now - new Date(lastSeenAt).getTime(),
+  );
+  const minutes = Math.floor(difference / 60_000);
+
+  if (minutes < 1) return "Hoạt động vừa xong";
+  if (minutes < 60) return `Hoạt động ${minutes} phút trước`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Hoạt động ${hours} giờ trước`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `Hoạt động ${days} ngày trước`;
+
+  return `Hoạt động ${new Date(lastSeenAt).toLocaleString(
+    "vi-VN",
+    {
+      dateStyle: "short",
+      timeStyle: "short",
+    },
+  )}`;
+}
+
 export default function MessagesPage() {
   const [currentUserId, setCurrentUserId] = useState("");
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
+  const [onlineFriendIds, setOnlineFriendIds] = useState<
+    Set<string>
+  >(new Set());
   const [selectedProfile, setSelectedProfile] =
     useState<ProfileRow | null>(null);
   const [messages, setMessages] = useState<DirectMessageRow[]>(
@@ -571,15 +605,34 @@ export default function MessagesPage() {
 
   const filteredProfiles = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase("vi");
+    const visibleProfiles = query
+      ? profiles.filter((profile) =>
+          profile.username
+            .toLocaleLowerCase("vi")
+            .includes(query),
+        )
+      : profiles;
 
-    if (!query) return profiles;
+    return [...visibleProfiles].sort(
+      (firstProfile, secondProfile) => {
+        const firstOnline = onlineFriendIds.has(
+          firstProfile.id,
+        );
+        const secondOnline = onlineFriendIds.has(
+          secondProfile.id,
+        );
 
-    return profiles.filter((profile) =>
-      profile.username
-        .toLocaleLowerCase("vi")
-        .includes(query),
+        if (firstOnline !== secondOnline) {
+          return firstOnline ? -1 : 1;
+        }
+
+        return firstProfile.username.localeCompare(
+          secondProfile.username,
+          "vi",
+        );
+      },
     );
-  }, [profiles, searchQuery]);
+  }, [onlineFriendIds, profiles, searchQuery]);
 
   const conversationTimeline =
     useMemo<ConversationTimelineItem[]>(() => {
@@ -721,6 +774,9 @@ export default function MessagesPage() {
   useEffect(() => {
     let active = true;
     let realtimeChannel:
+      | ReturnType<typeof supabase.channel>
+      | null = null;
+    let presenceChannel:
       | ReturnType<typeof supabase.channel>
       | null = null;
 
@@ -1012,6 +1068,7 @@ export default function MessagesPage() {
             }
 
             const nextProfiles = (data ?? []) as ProfileRow[];
+            profilesRef.current = nextProfiles;
             setProfiles(nextProfiles);
 
             const selectedId =
@@ -1105,6 +1162,7 @@ export default function MessagesPage() {
             if (!active || error) return;
 
             const nextProfiles = (data ?? []) as ProfileRow[];
+            profilesRef.current = nextProfiles;
             setProfiles(nextProfiles);
 
             const selectedId =
@@ -1237,6 +1295,39 @@ export default function MessagesPage() {
         )
         .subscribe();
 
+      presenceChannel = supabase.channel(
+        "online-users-global",
+      );
+
+      presenceChannel.on(
+        "presence",
+        { event: "sync" },
+        () => {
+          if (!active || !presenceChannel) return;
+
+          const onlineIds = new Set(
+            Object.values(
+              presenceChannel.presenceState(),
+            )
+              .flat()
+              .map((presence) =>
+                String(
+                  (
+                    presence as unknown as {
+                      user_id?: string;
+                    }
+                  ).user_id ?? "",
+                ),
+              )
+              .filter(Boolean),
+          );
+
+          setOnlineFriendIds(onlineIds);
+        },
+      );
+
+      presenceChannel.subscribe();
+
       setLoading(false);
     }
 
@@ -1247,6 +1338,10 @@ export default function MessagesPage() {
 
       if (realtimeChannel) {
         void supabase.removeChannel(realtimeChannel);
+      }
+
+      if (presenceChannel) {
+        void supabase.removeChannel(presenceChannel);
       }
     };
   }, []);
@@ -1921,31 +2016,48 @@ export default function MessagesPage() {
                 selectedProfile?.id === profile.id;
               const unread =
                 unreadByUser[profile.id] ?? 0;
+              const isOnline = onlineFriendIds.has(
+                profile.id,
+              );
 
               return (
                 <button
                   key={profile.id}
                   type="button"
                   onClick={() => selectMember(profile)}
-                  className={`mb-1 flex w-full items-center gap-3 rounded-md p-3 text-left ${
+                  className={`mb-1 flex w-full items-center gap-3 rounded-md p-3 text-left transition ${
                     isSelected
                       ? "bg-white/10"
                       : "hover:bg-white/5"
-                  }`}
+                  } ${isOnline ? "" : "opacity-60"}`}
                 >
-                  {profile.avatar_url ? (
-                    <img
-                      src={profile.avatar_url}
-                      alt={profile.username}
-                      className="h-11 w-11 rounded-full object-cover"
+                  <span className="relative shrink-0">
+                    {profile.avatar_url ? (
+                      <img
+                        src={profile.avatar_url}
+                        alt={profile.username}
+                        className={`h-11 w-11 rounded-full object-cover ${
+                          isOnline ? "" : "grayscale"
+                        }`}
+                      />
+                    ) : (
+                      <span
+                        className={`flex h-11 w-11 items-center justify-center rounded-full bg-indigo-500 font-bold ${
+                          isOnline ? "" : "grayscale"
+                        }`}
+                      >
+                        {profile.username
+                          .charAt(0)
+                          .toUpperCase()}
+                      </span>
+                    )}
+
+                    <span
+                      className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-[#2b2d31] ${
+                        isOnline ? "bg-green-500" : "bg-gray-600"
+                      }`}
                     />
-                  ) : (
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-indigo-500 font-bold">
-                      {profile.username
-                        .charAt(0)
-                        .toUpperCase()}
-                    </div>
-                  )}
+                  </span>
 
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-2">
@@ -1954,8 +2066,13 @@ export default function MessagesPage() {
                       </span>
                       <MemberBadge role={profile.role} />
                     </span>
-                    <span className="mt-0.5 block text-xs text-gray-500">
-                      {formatPublicId(profile.public_id)}
+                    <span className="mt-0.5 block truncate text-xs text-gray-500">
+                      {formatPublicId(profile.public_id)} · {isOnline
+                        ? "Đang online"
+                        : formatLastActive(
+                            profile.last_seen_at,
+                            clock,
+                          )}
                     </span>
                   </span>
 
@@ -1993,11 +2110,19 @@ export default function MessagesPage() {
                 <img
                   src={selectedProfile.avatar_url}
                   alt={selectedProfile.username}
-                  className="h-10 w-10 rounded-full object-cover"
+                  className={`h-10 w-10 rounded-full object-cover ${
+                    onlineFriendIds.has(selectedProfile.id)
+                      ? ""
+                      : "grayscale opacity-60"
+                  }`}
                 />
               ) : (
                 <div
-                  className="flex h-10 w-10 items-center justify-center rounded-full font-bold"
+                  className={`flex h-10 w-10 items-center justify-center rounded-full font-bold ${
+                    onlineFriendIds.has(selectedProfile.id)
+                      ? ""
+                      : "grayscale opacity-60"
+                  }`}
                   style={{
                     backgroundColor: activeChatColor.hex,
                   }}
@@ -2016,7 +2141,14 @@ export default function MessagesPage() {
                   <MemberBadge role={selectedProfile.role} />
                 </div>
                 <p className="text-xs text-gray-400">
-                  {formatPublicId(selectedProfile.public_id)} · Bạn bè
+                  {formatPublicId(selectedProfile.public_id)} · {onlineFriendIds.has(
+                    selectedProfile.id,
+                  )
+                    ? "Đang online"
+                    : formatLastActive(
+                        selectedProfile.last_seen_at,
+                        clock,
+                      )}
                 </p>
               </div>
 
