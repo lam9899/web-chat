@@ -44,6 +44,7 @@ const GLOBAL_PRESENCE_EVENT =
 const PRIVATE_MESSAGE_MEDIA_BUCKET =
   "private-message-media";
 const MAX_PRIVATE_IMAGE_SIZE = 5 * 1024 * 1024;
+const MAX_PRIVATE_FILE_SIZE = 20 * 1024 * 1024;
 
 const allowedPrivateImageTypes = new Set([
   "image/jpeg",
@@ -51,6 +52,30 @@ const allowedPrivateImageTypes = new Set([
   "image/webp",
   "image/gif",
 ]);
+
+const allowedPrivateFileTypes = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/zip",
+  "text/plain",
+]);
+
+const PRIVATE_FILE_ACCEPT = [
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".ppt",
+  ".pptx",
+  ".zip",
+  ".txt",
+].join(",");
 
 function privateImageExtension(file: File) {
   const extensionByType: Record<string, string> = {
@@ -61,6 +86,106 @@ function privateImageExtension(file: File) {
   };
 
   return extensionByType[file.type] ?? "img";
+}
+
+
+function privateAttachmentExtension(file: File) {
+  if (allowedPrivateImageTypes.has(file.type)) {
+    return privateImageExtension(file);
+  }
+
+  const extensionFromName = file.name
+    .split(".")
+    .pop()
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
+  if (
+    extensionFromName &&
+    [
+      "pdf",
+      "doc",
+      "docx",
+      "xls",
+      "xlsx",
+      "ppt",
+      "pptx",
+      "zip",
+      "txt",
+    ].includes(extensionFromName)
+  ) {
+    return extensionFromName;
+  }
+
+  const extensionByType: Record<string, string> = {
+    "application/pdf": "pdf",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+      "docx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+      "xlsx",
+    "application/vnd.ms-powerpoint": "ppt",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+      "pptx",
+    "application/zip": "zip",
+    "text/plain": "txt",
+  };
+
+  return extensionByType[file.type] ?? "file";
+}
+
+function isImageAttachment(
+  attachmentType: string | null | undefined,
+) {
+  return Boolean(
+    attachmentType?.startsWith("image/"),
+  );
+}
+
+function formatAttachmentSize(
+  size: number | null | undefined,
+) {
+  if (!size || size <= 0) return "";
+
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(size / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function attachmentIcon(
+  attachmentType: string | null | undefined,
+) {
+  if (!attachmentType) return "📎";
+  if (attachmentType === "application/pdf") return "📕";
+  if (
+    attachmentType.includes("word") ||
+    attachmentType === "application/msword"
+  ) {
+    return "📘";
+  }
+  if (
+    attachmentType.includes("excel") ||
+    attachmentType.includes("spreadsheet")
+  ) {
+    return "📗";
+  }
+  if (
+    attachmentType.includes("powerpoint") ||
+    attachmentType.includes("presentation")
+  ) {
+    return "📙";
+  }
+  if (attachmentType === "application/zip") return "🗜️";
+  if (attachmentType === "text/plain") return "📄";
+
+  return "📎";
 }
 
 function createPrivateMediaId() {
@@ -562,6 +687,8 @@ export default function MessagesPage() {
     selectedImagePreview,
     setSelectedImagePreview,
   ] = useState("");
+  const [selectedDocumentFile, setSelectedDocumentFile] =
+    useState<File | null>(null);
   const [imageViewer, setImageViewer] =
     useState<ImageViewerState | null>(null);
 
@@ -617,6 +744,9 @@ export default function MessagesPage() {
     null,
   );
   const imageInputRef = useRef<HTMLInputElement | null>(
+    null,
+  );
+  const fileInputRef = useRef<HTMLInputElement | null>(
     null,
   );
   const privateChatPreferencesRef = useRef<
@@ -1124,7 +1254,11 @@ export default function MessagesPage() {
                         "một thành viên",
                       content:
                         newMessage.content.trim() ||
-                        "📷 Đã gửi một ảnh",
+                        (isImageAttachment(
+                          newMessage.attachment_type,
+                        )
+                          ? "📷 Đã gửi một ảnh"
+                          : "📎 Đã gửi một tệp"),
                     });
                   }
                 }
@@ -1487,6 +1621,7 @@ export default function MessagesPage() {
       setEditingContent("");
       setSelectedImageFile(null);
       setSelectedImagePreview("");
+      setSelectedDocumentFile(null);
       setErrorMessage("");
 
       const [
@@ -1664,6 +1799,7 @@ export default function MessagesPage() {
     setShowEmojiPicker(false);
     setSelectedImageFile(null);
     setSelectedImagePreview("");
+    setSelectedDocumentFile(null);
     setMessageInput("");
 
     const nextUrl = `/messages?user=${encodeURIComponent(
@@ -1708,6 +1844,42 @@ export default function MessagesPage() {
     }
   }
 
+  function clearSelectedDocument() {
+    setSelectedDocumentFile(null);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  function selectPrivateFile(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+
+    if (!file) return;
+
+    if (!allowedPrivateFileTypes.has(file.type)) {
+      setErrorMessage(
+        "Chỉ hỗ trợ PDF, Word, Excel, PowerPoint, ZIP hoặc TXT.",
+      );
+      return;
+    }
+
+    if (file.size > MAX_PRIVATE_FILE_SIZE) {
+      setErrorMessage(
+        "Tệp vượt quá giới hạn 20 MB.",
+      );
+      return;
+    }
+
+    clearSelectedImage();
+    setErrorMessage("");
+    setSelectedDocumentFile(file);
+    setShowEmojiPicker(false);
+  }
+
   function selectPrivateImage(
     event: ChangeEvent<HTMLInputElement>,
   ) {
@@ -1730,6 +1902,7 @@ export default function MessagesPage() {
       return;
     }
 
+    clearSelectedDocument();
     setErrorMessage("");
     setSelectedImageFile(file);
     setSelectedImagePreview(
@@ -1744,10 +1917,11 @@ export default function MessagesPage() {
     event.preventDefault();
 
     const content = messageInput.trim();
-    const imageFile = selectedImageFile;
+    const attachmentFile =
+      selectedImageFile ?? selectedDocumentFile;
 
     if (
-      (!content && !imageFile) ||
+      (!content && !attachmentFile) ||
       !currentUserId ||
       !selectedProfile ||
       sending
@@ -1774,9 +1948,9 @@ export default function MessagesPage() {
 
     let uploadedPath = "";
 
-    if (imageFile) {
+    if (attachmentFile) {
       const extension =
-        privateImageExtension(imageFile);
+        privateAttachmentExtension(attachmentFile);
 
       uploadedPath = `${currentUserId}/${
         selectedProfile.id
@@ -1785,15 +1959,15 @@ export default function MessagesPage() {
       const { error: uploadError } =
         await supabase.storage
           .from(PRIVATE_MESSAGE_MEDIA_BUCKET)
-          .upload(uploadedPath, imageFile, {
+          .upload(uploadedPath, attachmentFile, {
             cacheControl: "3600",
-            contentType: imageFile.type,
+            contentType: attachmentFile.type,
             upsert: false,
           });
 
       if (uploadError) {
         setErrorMessage(
-          `Không thể tải ảnh lên: ${uploadError.message}`,
+          `Không thể tải tệp lên: ${uploadError.message}`,
         );
         setSending(false);
         return;
@@ -1809,11 +1983,11 @@ export default function MessagesPage() {
         attachment_path:
           uploadedPath || null,
         attachment_name:
-          imageFile?.name ?? null,
+          attachmentFile?.name ?? null,
         attachment_type:
-          imageFile?.type ?? null,
+          attachmentFile?.type ?? null,
         attachment_size:
-          imageFile?.size ?? null,
+          attachmentFile?.size ?? null,
       });
 
     if (error) {
@@ -1836,6 +2010,7 @@ export default function MessagesPage() {
     } else {
       setMessageInput("");
       clearSelectedImage();
+      clearSelectedDocument();
     }
 
     setSending(false);
@@ -2766,7 +2941,10 @@ export default function MessagesPage() {
                               </div>
                             ) : (
                               <>
-                                {message.attachment_url ? (
+                                {message.attachment_url &&
+                                isImageAttachment(
+                                  message.attachment_type,
+                                ) ? (
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -2792,9 +2970,44 @@ export default function MessagesPage() {
                                       loading="lazy"
                                     />
                                   </button>
+                                ) : message.attachment_url &&
+                                  message.attachment_path ? (
+                                  <a
+                                    href={message.attachment_url}
+                                    download={
+                                      message.attachment_name ??
+                                      undefined
+                                    }
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="flex min-w-0 items-center gap-3 rounded-xl border border-white/10 bg-black/15 p-3 transition hover:bg-black/25"
+                                    title="Tải tệp xuống"
+                                  >
+                                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10 text-2xl">
+                                      {attachmentIcon(
+                                        message.attachment_type,
+                                      )}
+                                    </span>
+
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-sm font-semibold">
+                                        {message.attachment_name ??
+                                          "Tệp đính kèm"}
+                                      </span>
+                                      <span className="mt-0.5 block text-xs text-white/60">
+                                        {formatAttachmentSize(
+                                          message.attachment_size,
+                                        ) || "Tệp đính kèm"}
+                                      </span>
+                                    </span>
+
+                                    <span className="shrink-0 rounded-lg bg-white/10 px-2.5 py-1.5 text-xs font-bold">
+                                      Tải xuống
+                                    </span>
+                                  </a>
                                 ) : message.attachment_path ? (
                                   <div className="rounded-xl bg-black/15 px-4 py-3 text-sm text-white/75">
-                                    Không thể tải ảnh. Hãy làm mới trang để thử lại.
+                                    Không thể tải tệp. Hãy làm mới trang để thử lại.
                                   </div>
                                 ) : null}
 
@@ -2914,6 +3127,37 @@ export default function MessagesPage() {
               onSubmit={sendMessage}
               className="shrink-0 border-t border-black/20 bg-[#313338] p-3 md:p-4"
             >
+              {selectedDocumentFile && (
+                <div className="mb-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-[#2b2d31] p-3">
+                  <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/10 text-3xl">
+                    {attachmentIcon(
+                      selectedDocumentFile.type,
+                    )}
+                  </span>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">
+                      {selectedDocumentFile.name}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">
+                      {formatAttachmentSize(
+                        selectedDocumentFile.size,
+                      )}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={clearSelectedDocument}
+                    aria-label="Bỏ tệp đã chọn"
+                    title="Bỏ tệp"
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-red-500/15 text-red-300 hover:bg-red-500/25"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
               {selectedImagePreview && (
                 <div className="mb-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-[#2b2d31] p-3">
                   <img
@@ -2951,12 +3195,37 @@ export default function MessagesPage() {
 
               <div className="flex items-center rounded-xl bg-[#383a40] px-2">
                 <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={PRIVATE_FILE_ACCEPT}
+                  onChange={selectPrivateFile}
+                  className="hidden"
+                />
+
+                <input
                   ref={imageInputRef}
                   type="file"
                   accept="image/jpeg,image/png,image/webp,image/gif"
                   onChange={selectPrivateImage}
                   className="hidden"
                 />
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    fileInputRef.current?.click()
+                  }
+                  disabled={
+                    sending ||
+                    isSuspended ||
+                    isSelectedBlocked
+                  }
+                  aria-label="Chọn tệp"
+                  title="Gửi PDF, Word, Excel, PowerPoint, ZIP hoặc TXT"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  📎
+                </button>
 
                 <button
                   type="button"
@@ -3062,7 +3331,8 @@ export default function MessagesPage() {
                     isSuspended ||
                     isSelectedBlocked ||
                     !messageInput.trim() &&
-                    !selectedImageFile
+                    !selectedImageFile &&
+                    !selectedDocumentFile
                   }
                   className="my-1.5 ml-2 rounded-lg px-4 py-2 text-sm font-semibold transition hover:brightness-110 disabled:opacity-50"
                   style={{
