@@ -45,6 +45,65 @@ const PRIVATE_MESSAGE_MEDIA_BUCKET =
   "private-message-media";
 const MAX_PRIVATE_IMAGE_SIZE = 5 * 1024 * 1024;
 const MAX_PRIVATE_FILE_SIZE = 20 * 1024 * 1024;
+const MAX_PRIVATE_VOICE_SIZE = 10 * 1024 * 1024;
+const MAX_PRIVATE_VOICE_DURATION_SECONDS = 5 * 60;
+
+const privateVoiceMimeCandidates = [
+  "audio/webm;codecs=opus",
+  "audio/webm",
+  "audio/ogg;codecs=opus",
+  "audio/ogg",
+  "audio/mp4",
+];
+
+function supportedPrivateVoiceMimeType() {
+  if (
+    typeof MediaRecorder === "undefined" ||
+    typeof MediaRecorder.isTypeSupported !== "function"
+  ) {
+    return "";
+  }
+
+  return (
+    privateVoiceMimeCandidates.find((mimeType) =>
+      MediaRecorder.isTypeSupported(mimeType),
+    ) ?? ""
+  );
+}
+
+function normalizePrivateVoiceMimeType(
+  mimeType: string,
+) {
+  return mimeType.split(";")[0] || "audio/webm";
+}
+
+function privateVoiceExtension(mimeType: string) {
+  const normalized =
+    normalizePrivateVoiceMimeType(mimeType);
+
+  if (normalized === "audio/ogg") return "ogg";
+  if (normalized === "audio/mp4") return "m4a";
+  if (normalized === "audio/mpeg") return "mp3";
+  if (normalized === "audio/wav") return "wav";
+
+  return "webm";
+}
+
+function isVoiceAttachment(
+  attachmentType: string | null | undefined,
+) {
+  return Boolean(attachmentType?.startsWith("audio/"));
+}
+
+function formatVoiceDuration(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds % 60;
+
+  return `${String(minutes).padStart(2, "0")}:${String(
+    remainingSeconds,
+  ).padStart(2, "0")}`;
+}
 
 const allowedPrivateImageTypes = new Set([
   "image/jpeg",
@@ -92,6 +151,10 @@ function privateImageExtension(file: File) {
 function privateAttachmentExtension(file: File) {
   if (allowedPrivateImageTypes.has(file.type)) {
     return privateImageExtension(file);
+  }
+
+  if (isVoiceAttachment(file.type)) {
+    return privateVoiceExtension(file.type);
   }
 
   const extensionFromName = file.name
@@ -163,6 +226,7 @@ function attachmentIcon(
   attachmentType: string | null | undefined,
 ) {
   if (!attachmentType) return "📎";
+  if (isVoiceAttachment(attachmentType)) return "🎤";
   if (attachmentType === "application/pdf") return "📕";
   if (
     attachmentType.includes("word") ||
@@ -608,7 +672,7 @@ function showPrivateMessageNotification({
   const notification = new Notification(
     `Tin nhắn từ ${senderName}`,
     {
-      body: content.trim() || "📷 Đã gửi một ảnh",
+      body: content.trim() || "📎 Đã gửi một tệp",
       icon: "/icon.png",
       tag: `private-message-${messageId}`,
     },
@@ -689,6 +753,16 @@ export default function MessagesPage() {
   ] = useState("");
   const [selectedDocumentFile, setSelectedDocumentFile] =
     useState<File | null>(null);
+  const [selectedVoiceFile, setSelectedVoiceFile] =
+    useState<File | null>(null);
+  const [voicePreviewUrl, setVoicePreviewUrl] =
+    useState("");
+  const [voicePreviewDuration, setVoicePreviewDuration] =
+    useState(0);
+  const [isVoiceRecording, setIsVoiceRecording] =
+    useState(false);
+  const [voiceRecordingSeconds, setVoiceRecordingSeconds] =
+    useState(0);
   const [imageViewer, setImageViewer] =
     useState<ImageViewerState | null>(null);
 
@@ -749,6 +823,15 @@ export default function MessagesPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(
     null,
   );
+  const mediaRecorderRef = useRef<MediaRecorder | null>(
+    null,
+  );
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
+  const voiceTimerRef =
+    useRef<ReturnType<typeof setInterval> | null>(null);
+  const voiceStartedAtRef = useRef(0);
+  const discardVoiceRecordingRef = useRef(false);
   const privateChatPreferencesRef = useRef<
     Record<string, PrivateChatPreference>
   >({});
@@ -814,8 +897,20 @@ export default function MessagesPage() {
       if (selectedImagePreview) {
         URL.revokeObjectURL(selectedImagePreview);
       }
+
+      if (voicePreviewUrl) {
+        URL.revokeObjectURL(voicePreviewUrl);
+      }
+
+      if (voiceTimerRef.current) {
+        clearInterval(voiceTimerRef.current);
+      }
+
+      voiceStreamRef.current
+        ?.getTracks()
+        .forEach((track) => track.stop());
     };
-  }, [selectedImagePreview]);
+  }, [selectedImagePreview, voicePreviewUrl]);
 
   useEffect(() => {
     function closeFloatingMenus(event: MouseEvent) {
@@ -1254,11 +1349,15 @@ export default function MessagesPage() {
                         "một thành viên",
                       content:
                         newMessage.content.trim() ||
-                        (isImageAttachment(
+                        (isVoiceAttachment(
                           newMessage.attachment_type,
                         )
-                          ? "📷 Đã gửi một ảnh"
-                          : "📎 Đã gửi một tệp"),
+                          ? "🎤 Đã gửi một tin nhắn thoại"
+                          : isImageAttachment(
+                                newMessage.attachment_type,
+                              )
+                            ? "📷 Đã gửi một ảnh"
+                            : "📎 Đã gửi một tệp"),
                     });
                   }
                 }
@@ -1622,6 +1721,9 @@ export default function MessagesPage() {
       setSelectedImageFile(null);
       setSelectedImagePreview("");
       setSelectedDocumentFile(null);
+      setSelectedVoiceFile(null);
+      setVoicePreviewUrl("");
+      setVoicePreviewDuration(0);
       setErrorMessage("");
 
       const [
@@ -1800,6 +1902,9 @@ export default function MessagesPage() {
     setSelectedImageFile(null);
     setSelectedImagePreview("");
     setSelectedDocumentFile(null);
+    setSelectedVoiceFile(null);
+    setVoicePreviewUrl("");
+    setVoicePreviewDuration(0);
     setMessageInput("");
 
     const nextUrl = `/messages?user=${encodeURIComponent(
@@ -1852,6 +1957,235 @@ export default function MessagesPage() {
     }
   }
 
+  function stopVoiceStream() {
+    voiceStreamRef.current
+      ?.getTracks()
+      .forEach((track) => track.stop());
+    voiceStreamRef.current = null;
+  }
+
+  function clearVoiceTimer() {
+    if (voiceTimerRef.current) {
+      clearInterval(voiceTimerRef.current);
+      voiceTimerRef.current = null;
+    }
+  }
+
+  function clearSelectedVoice() {
+    if (voicePreviewUrl) {
+      URL.revokeObjectURL(voicePreviewUrl);
+    }
+
+    setSelectedVoiceFile(null);
+    setVoicePreviewUrl("");
+    setVoicePreviewDuration(0);
+  }
+
+  function stopVoiceRecording() {
+    const recorder = mediaRecorderRef.current;
+
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+  }
+
+  function cancelVoiceRecording() {
+    discardVoiceRecordingRef.current = true;
+
+    const recorder = mediaRecorderRef.current;
+
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+      return;
+    }
+
+    clearVoiceTimer();
+    stopVoiceStream();
+    setIsVoiceRecording(false);
+    setVoiceRecordingSeconds(0);
+  }
+
+  async function startVoiceRecording() {
+    if (
+      isVoiceRecording ||
+      sending ||
+      isSuspended ||
+      isSelectedBlocked
+    ) {
+      return;
+    }
+
+    if (
+      typeof MediaRecorder === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      setErrorMessage(
+        "Trình duyệt này chưa hỗ trợ ghi âm. Hãy dùng Chrome, Edge hoặc Safari mới.",
+      );
+      return;
+    }
+
+    try {
+      clearSelectedImage();
+      clearSelectedDocument();
+      clearSelectedVoice();
+      clearSelectedVoice();
+      setShowEmojiPicker(false);
+      setErrorMessage("");
+
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
+      voiceStreamRef.current = stream;
+      voiceChunksRef.current = [];
+      discardVoiceRecordingRef.current = false;
+      voiceStartedAtRef.current = Date.now();
+
+      const preferredMimeType =
+        supportedPrivateVoiceMimeType();
+      const recorder = preferredMimeType
+        ? new MediaRecorder(stream, {
+            mimeType: preferredMimeType,
+            audioBitsPerSecond: 64000,
+          })
+        : new MediaRecorder(stream, {
+            audioBitsPerSecond: 64000,
+          });
+
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        setErrorMessage(
+          "Không thể tiếp tục ghi âm. Hãy kiểm tra quyền microphone.",
+        );
+      };
+
+      recorder.onstop = () => {
+        clearVoiceTimer();
+        stopVoiceStream();
+        setIsVoiceRecording(false);
+
+        const duration = Math.max(
+          1,
+          Math.min(
+            MAX_PRIVATE_VOICE_DURATION_SECONDS,
+            Math.round(
+              (Date.now() -
+                voiceStartedAtRef.current) /
+                1000,
+            ),
+          ),
+        );
+
+        setVoiceRecordingSeconds(0);
+
+        if (discardVoiceRecordingRef.current) {
+          discardVoiceRecordingRef.current = false;
+          voiceChunksRef.current = [];
+          return;
+        }
+
+        const recorderMimeType =
+          normalizePrivateVoiceMimeType(
+            recorder.mimeType ||
+              voiceChunksRef.current[0]?.type ||
+              "audio/webm",
+          );
+
+        const blob = new Blob(
+          voiceChunksRef.current,
+          {
+            type: recorderMimeType,
+          },
+        );
+
+        voiceChunksRef.current = [];
+
+        if (!blob.size) {
+          setErrorMessage(
+            "Không thu được âm thanh. Hãy thử lại và kiểm tra microphone.",
+          );
+          return;
+        }
+
+        if (blob.size > MAX_PRIVATE_VOICE_SIZE) {
+          setErrorMessage(
+            "Tin nhắn thoại vượt quá giới hạn 10 MB.",
+          );
+          return;
+        }
+
+        const extension =
+          privateVoiceExtension(recorderMimeType);
+        const file = new File(
+          [blob],
+          `voice-${Date.now()}.${extension}`,
+          {
+            type: recorderMimeType,
+          },
+        );
+
+        setSelectedVoiceFile(file);
+        setVoicePreviewUrl(
+          URL.createObjectURL(blob),
+        );
+        setVoicePreviewDuration(duration);
+      };
+
+      recorder.start(1000);
+      setIsVoiceRecording(true);
+      setVoiceRecordingSeconds(0);
+
+      voiceTimerRef.current = setInterval(() => {
+        const elapsed = Math.floor(
+          (Date.now() -
+            voiceStartedAtRef.current) /
+            1000,
+        );
+
+        setVoiceRecordingSeconds(
+          Math.min(
+            elapsed,
+            MAX_PRIVATE_VOICE_DURATION_SECONDS,
+          ),
+        );
+
+        if (
+          elapsed >=
+            MAX_PRIVATE_VOICE_DURATION_SECONDS &&
+          recorder.state !== "inactive"
+        ) {
+          recorder.stop();
+        }
+      }, 250);
+    } catch (error) {
+      stopVoiceStream();
+      clearVoiceTimer();
+      setIsVoiceRecording(false);
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Không thể truy cập microphone.";
+
+      setErrorMessage(
+        `Không thể ghi âm: ${message}`,
+      );
+    }
+  }
+
   function selectPrivateFile(
     event: ChangeEvent<HTMLInputElement>,
   ) {
@@ -1874,7 +2208,12 @@ export default function MessagesPage() {
       return;
     }
 
+    if (isVoiceRecording) {
+      cancelVoiceRecording();
+    }
+
     clearSelectedImage();
+    clearSelectedVoice();
     setErrorMessage("");
     setSelectedDocumentFile(file);
     setShowEmojiPicker(false);
@@ -1902,7 +2241,12 @@ export default function MessagesPage() {
       return;
     }
 
+    if (isVoiceRecording) {
+      cancelVoiceRecording();
+    }
+
     clearSelectedDocument();
+    clearSelectedVoice();
     setErrorMessage("");
     setSelectedImageFile(file);
     setSelectedImagePreview(
@@ -1918,7 +2262,9 @@ export default function MessagesPage() {
 
     const content = messageInput.trim();
     const attachmentFile =
-      selectedImageFile ?? selectedDocumentFile;
+      selectedImageFile ??
+      selectedDocumentFile ??
+      selectedVoiceFile;
 
     if (
       (!content && !attachmentFile) ||
@@ -2942,6 +3288,24 @@ export default function MessagesPage() {
                             ) : (
                               <>
                                 {message.attachment_url &&
+                                isVoiceAttachment(
+                                  message.attachment_type,
+                                ) ? (
+                                  <div className="min-w-[260px] rounded-xl border border-white/10 bg-black/15 p-3">
+                                    <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                                      <span>🎤</span>
+                                      <span>Tin nhắn thoại</span>
+                                    </div>
+                                    <audio
+                                      controls
+                                      preload="metadata"
+                                      src={message.attachment_url}
+                                      className="h-10 w-full max-w-md"
+                                    >
+                                      Trình duyệt không hỗ trợ phát âm thanh.
+                                    </audio>
+                                  </div>
+                                ) : message.attachment_url &&
                                 isImageAttachment(
                                   message.attachment_type,
                                 ) ? (
@@ -3127,6 +3491,73 @@ export default function MessagesPage() {
               onSubmit={sendMessage}
               className="shrink-0 border-t border-black/20 bg-[#313338] p-3 md:p-4"
             >
+              {isVoiceRecording && (
+                <div className="mb-3 flex items-center gap-3 rounded-2xl border border-red-500/30 bg-red-500/10 p-3">
+                  <span className="h-3 w-3 animate-pulse rounded-full bg-red-500" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-red-200">
+                      Đang ghi âm
+                    </p>
+                    <p className="text-xs text-red-200/70">
+                      {formatVoiceDuration(
+                        voiceRecordingSeconds,
+                      )} / 05:00
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={stopVoiceRecording}
+                    className="rounded-lg bg-red-500 px-3 py-2 text-sm font-bold text-white hover:bg-red-400"
+                  >
+                    Dừng
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelVoiceRecording}
+                    className="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-gray-200 hover:bg-white/15"
+                  >
+                    Hủy
+                  </button>
+                </div>
+              )}
+
+              {selectedVoiceFile && voicePreviewUrl && (
+                <div className="mb-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-[#2b2d31] p-3">
+                  <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-indigo-500/20 text-3xl">
+                    🎤
+                  </span>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold">
+                      Tin nhắn thoại
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">
+                      {formatVoiceDuration(
+                        voicePreviewDuration,
+                      )} · {formatAttachmentSize(
+                        selectedVoiceFile.size,
+                      )}
+                    </p>
+                    <audio
+                      controls
+                      preload="metadata"
+                      src={voicePreviewUrl}
+                      className="mt-2 h-9 w-full max-w-md"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={clearSelectedVoice}
+                    aria-label="Bỏ tin nhắn thoại"
+                    title="Bỏ tin nhắn thoại"
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-red-500/15 text-red-300 hover:bg-red-500/25"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
               {selectedDocumentFile && (
                 <div className="mb-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-[#2b2d31] p-3">
                   <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/10 text-3xl">
@@ -3243,6 +3674,38 @@ export default function MessagesPage() {
                 >
                   🖼️
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    isVoiceRecording
+                      ? stopVoiceRecording()
+                      : void startVoiceRecording()
+                  }
+                  disabled={
+                    sending ||
+                    isSuspended ||
+                    isSelectedBlocked
+                  }
+                  aria-label={
+                    isVoiceRecording
+                      ? "Dừng ghi âm"
+                      : "Ghi âm"
+                  }
+                  title={
+                    isVoiceRecording
+                      ? "Dừng ghi âm"
+                      : "Ghi tin nhắn thoại"
+                  }
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                    isVoiceRecording
+                      ? "bg-red-500/20 text-red-300"
+                      : "hover:bg-white/10"
+                  }`}
+                >
+                  {isVoiceRecording ? "⏹️" : "🎤"}
+                </button>
+
                 <div
                   className="relative flex shrink-0 items-center"
                   data-emoji-picker
@@ -3330,9 +3793,11 @@ export default function MessagesPage() {
                     sending ||
                     isSuspended ||
                     isSelectedBlocked ||
+                    isVoiceRecording ||
                     !messageInput.trim() &&
                     !selectedImageFile &&
-                    !selectedDocumentFile
+                    !selectedDocumentFile &&
+                    !selectedVoiceFile
                   }
                   className="my-1.5 ml-2 rounded-lg px-4 py-2 text-sm font-semibold transition hover:brightness-110 disabled:opacity-50"
                   style={{

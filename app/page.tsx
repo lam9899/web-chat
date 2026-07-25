@@ -195,6 +195,62 @@ const composerEmojiChoices = [
 
 const MAX_PUBLIC_IMAGE_SIZE = 5 * 1024 * 1024;
 const MAX_PUBLIC_FILE_SIZE = 20 * 1024 * 1024;
+const MAX_VOICE_MESSAGE_SIZE = 10 * 1024 * 1024;
+const MAX_VOICE_DURATION_SECONDS = 5 * 60;
+
+const voiceMimeCandidates = [
+  "audio/webm;codecs=opus",
+  "audio/webm",
+  "audio/ogg;codecs=opus",
+  "audio/ogg",
+  "audio/mp4",
+];
+
+function supportedVoiceMimeType() {
+  if (
+    typeof MediaRecorder === "undefined" ||
+    typeof MediaRecorder.isTypeSupported !== "function"
+  ) {
+    return "";
+  }
+
+  return (
+    voiceMimeCandidates.find((mimeType) =>
+      MediaRecorder.isTypeSupported(mimeType),
+    ) ?? ""
+  );
+}
+
+function normalizeVoiceMimeType(mimeType: string) {
+  return mimeType.split(";")[0] || "audio/webm";
+}
+
+function voiceFileExtension(mimeType: string) {
+  const normalized = normalizeVoiceMimeType(mimeType);
+
+  if (normalized === "audio/ogg") return "ogg";
+  if (normalized === "audio/mp4") return "m4a";
+  if (normalized === "audio/mpeg") return "mp3";
+  if (normalized === "audio/wav") return "wav";
+
+  return "webm";
+}
+
+function isVoiceAttachment(
+  attachmentType: string | null | undefined,
+) {
+  return Boolean(attachmentType?.startsWith("audio/"));
+}
+
+function formatVoiceDuration(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds % 60;
+
+  return `${String(minutes).padStart(2, "0")}:${String(
+    remainingSeconds,
+  ).padStart(2, "0")}`;
+}
 
 const allowedPublicImageTypes = new Set([
   "image/jpeg",
@@ -263,6 +319,17 @@ function publicAttachmentIcon(
   attachmentName?: string | null,
 ) {
   const name = attachmentName?.toLowerCase() ?? "";
+
+  if (
+    isVoiceAttachment(attachmentType) ||
+    name.endsWith(".webm") ||
+    name.endsWith(".ogg") ||
+    name.endsWith(".m4a") ||
+    name.endsWith(".mp3") ||
+    name.endsWith(".wav")
+  ) {
+    return "🎤";
+  }
 
   if (
     attachmentType === "application/pdf" ||
@@ -401,6 +468,14 @@ export default function Home() {
     showComposerEmojiPicker,
     setShowComposerEmojiPicker,
   ] = useState(false);
+  const [isVoiceRecording, setIsVoiceRecording] =
+    useState(false);
+  const [voiceRecordingSeconds, setVoiceRecordingSeconds] =
+    useState(0);
+  const [voicePreviewUrl, setVoicePreviewUrl] =
+    useState("");
+  const [voicePreviewDuration, setVoicePreviewDuration] =
+    useState(0);
 
   const [authLoading, setAuthLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(true);
@@ -437,6 +512,15 @@ export default function Home() {
   );
   const documentInputRef =
     useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(
+    null,
+  );
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
+  const voiceTimerRef =
+    useRef<ReturnType<typeof setInterval> | null>(null);
+  const voiceStartedAtRef = useRef(0);
+  const discardVoiceRecordingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const presenceChannelRef =
@@ -457,6 +541,22 @@ export default function Home() {
 
     setFriendsSidebarCollapsed(savedState === "1");
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (voiceTimerRef.current) {
+        clearInterval(voiceTimerRef.current);
+      }
+
+      voiceStreamRef.current
+        ?.getTracks()
+        .forEach((track) => track.stop());
+
+      if (voicePreviewUrl) {
+        URL.revokeObjectURL(voicePreviewUrl);
+      }
+    };
+  }, [voicePreviewUrl]);
 
   function toggleFriendsSidebar() {
     setFriendsSidebarCollapsed((current) => {
@@ -1522,6 +1622,10 @@ export default function Home() {
 
     if (!file) return;
 
+    if (isVoiceRecording) {
+      cancelVoiceRecording();
+    }
+
     setPublicAttachment(file, "image");
   }
 
@@ -1541,7 +1645,25 @@ export default function Home() {
 
     if (!file) return;
 
+    if (isVoiceRecording) {
+      cancelVoiceRecording();
+    }
+
     setPublicAttachment(file, "document");
+  }
+
+  function stopVoiceStream() {
+    voiceStreamRef.current
+      ?.getTracks()
+      .forEach((track) => track.stop());
+    voiceStreamRef.current = null;
+  }
+
+  function clearVoiceTimer() {
+    if (voiceTimerRef.current) {
+      clearInterval(voiceTimerRef.current);
+      voiceTimerRef.current = null;
+    }
   }
 
   function clearAttachment() {
@@ -1549,8 +1671,14 @@ export default function Home() {
       URL.revokeObjectURL(attachmentPreview);
     }
 
+    if (voicePreviewUrl) {
+      URL.revokeObjectURL(voicePreviewUrl);
+    }
+
     setAttachmentFile(null);
     setAttachmentPreview("");
+    setVoicePreviewUrl("");
+    setVoicePreviewDuration(0);
 
     if (imageInputRef.current) {
       imageInputRef.current.value = "";
@@ -1558,6 +1686,208 @@ export default function Home() {
 
     if (documentInputRef.current) {
       documentInputRef.current.value = "";
+    }
+  }
+
+  function stopVoiceRecording() {
+    const recorder = mediaRecorderRef.current;
+
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+  }
+
+  function cancelVoiceRecording() {
+    discardVoiceRecordingRef.current = true;
+
+    const recorder = mediaRecorderRef.current;
+
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+      return;
+    }
+
+    clearVoiceTimer();
+    stopVoiceStream();
+    setIsVoiceRecording(false);
+    setVoiceRecordingSeconds(0);
+  }
+
+  async function startVoiceRecording() {
+    if (
+      isVoiceRecording ||
+      sending ||
+      isChatSuspended
+    ) {
+      return;
+    }
+
+    if (
+      typeof MediaRecorder === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      setErrorMessage(
+        "Trình duyệt này chưa hỗ trợ ghi âm. Hãy dùng Chrome, Edge hoặc Safari mới.",
+      );
+      return;
+    }
+
+    try {
+      clearAttachment();
+      setShowComposerEmojiPicker(false);
+      setErrorMessage("");
+
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
+      voiceStreamRef.current = stream;
+      voiceChunksRef.current = [];
+      discardVoiceRecordingRef.current = false;
+      voiceStartedAtRef.current = Date.now();
+
+      const preferredMimeType =
+        supportedVoiceMimeType();
+      const recorder = preferredMimeType
+        ? new MediaRecorder(stream, {
+            mimeType: preferredMimeType,
+            audioBitsPerSecond: 64000,
+          })
+        : new MediaRecorder(stream, {
+            audioBitsPerSecond: 64000,
+          });
+
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        setErrorMessage(
+          "Không thể tiếp tục ghi âm. Hãy kiểm tra quyền microphone.",
+        );
+      };
+
+      recorder.onstop = () => {
+        clearVoiceTimer();
+        stopVoiceStream();
+        setIsVoiceRecording(false);
+
+        const duration = Math.max(
+          1,
+          Math.min(
+            MAX_VOICE_DURATION_SECONDS,
+            Math.round(
+              (Date.now() -
+                voiceStartedAtRef.current) /
+                1000,
+            ),
+          ),
+        );
+
+        setVoiceRecordingSeconds(0);
+
+        if (discardVoiceRecordingRef.current) {
+          discardVoiceRecordingRef.current = false;
+          voiceChunksRef.current = [];
+          return;
+        }
+
+        const recorderMimeType =
+          normalizeVoiceMimeType(
+            recorder.mimeType ||
+              voiceChunksRef.current[0]?.type ||
+              "audio/webm",
+          );
+
+        const blob = new Blob(
+          voiceChunksRef.current,
+          {
+            type: recorderMimeType,
+          },
+        );
+
+        voiceChunksRef.current = [];
+
+        if (!blob.size) {
+          setErrorMessage(
+            "Không thu được âm thanh. Hãy thử lại và kiểm tra microphone.",
+          );
+          return;
+        }
+
+        if (blob.size > MAX_VOICE_MESSAGE_SIZE) {
+          setErrorMessage(
+            "Tin nhắn thoại vượt quá giới hạn 10 MB.",
+          );
+          return;
+        }
+
+        const extension =
+          voiceFileExtension(recorderMimeType);
+        const file = new File(
+          [blob],
+          `voice-${Date.now()}.${extension}`,
+          {
+            type: recorderMimeType,
+          },
+        );
+
+        const previewUrl =
+          URL.createObjectURL(blob);
+
+        setAttachmentFile(file);
+        setAttachmentPreview("");
+        setVoicePreviewUrl(previewUrl);
+        setVoicePreviewDuration(duration);
+      };
+
+      recorder.start(1000);
+      setIsVoiceRecording(true);
+      setVoiceRecordingSeconds(0);
+
+      voiceTimerRef.current = setInterval(() => {
+        const elapsed = Math.floor(
+          (Date.now() -
+            voiceStartedAtRef.current) /
+            1000,
+        );
+
+        setVoiceRecordingSeconds(
+          Math.min(
+            elapsed,
+            MAX_VOICE_DURATION_SECONDS,
+          ),
+        );
+
+        if (
+          elapsed >= MAX_VOICE_DURATION_SECONDS &&
+          recorder.state !== "inactive"
+        ) {
+          recorder.stop();
+        }
+      }, 250);
+    } catch (error) {
+      stopVoiceStream();
+      clearVoiceTimer();
+      setIsVoiceRecording(false);
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Không thể truy cập microphone.";
+
+      setErrorMessage(
+        `Không thể ghi âm: ${message}`,
+      );
     }
   }
 
@@ -2391,6 +2721,24 @@ export default function Home() {
                           )}
 
                           {message.attachment_url &&
+                          isVoiceAttachment(
+                            message.attachment_type,
+                          ) ? (
+                            <div className="mt-2 min-w-[260px] max-w-xl rounded-xl border border-white/10 bg-black/15 p-3">
+                              <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                                <span>🎤</span>
+                                <span>Tin nhắn thoại</span>
+                              </div>
+                              <audio
+                                controls
+                                preload="metadata"
+                                src={message.attachment_url}
+                                className="h-10 w-full max-w-md"
+                              >
+                                Trình duyệt không hỗ trợ phát âm thanh.
+                              </audio>
+                            </div>
+                          ) : message.attachment_url &&
                           isPublicImageAttachment(
                             message.attachment_type,
                             message.attachment_name,
@@ -2702,9 +3050,43 @@ export default function Home() {
             </div>
           )}
 
+          {isVoiceRecording && (
+            <div className="mb-2 flex max-w-xl items-center gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3">
+              <span className="h-3 w-3 animate-pulse rounded-full bg-red-500" />
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-red-200">
+                  Đang ghi âm
+                </p>
+                <p className="text-xs text-red-200/70">
+                  {formatVoiceDuration(
+                    voiceRecordingSeconds,
+                  )} / 05:00
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={stopVoiceRecording}
+                className="rounded-lg bg-red-500 px-3 py-2 text-sm font-bold text-white hover:bg-red-400"
+              >
+                Dừng
+              </button>
+              <button
+                type="button"
+                onClick={cancelVoiceRecording}
+                className="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-gray-200 hover:bg-white/15"
+              >
+                Hủy
+              </button>
+            </div>
+          )}
+
           {attachmentFile && (
             <div className="mb-2 flex max-w-xl items-center gap-3 rounded-xl border border-white/10 bg-[#2b2d31] p-3">
-              {attachmentPreview ? (
+              {voicePreviewUrl ? (
+                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-indigo-500/20 text-3xl">
+                  🎤
+                </span>
+              ) : attachmentPreview ? (
                 <img
                   src={attachmentPreview}
                   alt="Ảnh sắp gửi"
@@ -2721,13 +3103,29 @@ export default function Home() {
 
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold">
-                  {attachmentFile.name}
+                  {voicePreviewUrl
+                    ? "Tin nhắn thoại"
+                    : attachmentFile.name}
                 </p>
                 <p className="mt-1 text-xs text-gray-400">
-                  {formatPublicAttachmentSize(
-                    attachmentFile.size,
-                  )}
+                  {voicePreviewUrl
+                    ? `${formatVoiceDuration(
+                        voicePreviewDuration,
+                      )} · ${formatPublicAttachmentSize(
+                        attachmentFile.size,
+                      )}`
+                    : formatPublicAttachmentSize(
+                        attachmentFile.size,
+                      )}
                 </p>
+                {voicePreviewUrl && (
+                  <audio
+                    controls
+                    preload="metadata"
+                    src={voicePreviewUrl}
+                    className="mt-2 h-9 w-full max-w-md"
+                  />
+                )}
               </div>
 
               <button
@@ -2792,6 +3190,38 @@ export default function Home() {
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl text-gray-300 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 🖼️
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  isVoiceRecording
+                    ? stopVoiceRecording()
+                    : void startVoiceRecording()
+                }
+                disabled={
+                  isChatSuspended ||
+                  sending
+                }
+                aria-label={
+                  isVoiceRecording
+                    ? "Dừng ghi âm"
+                    : "Ghi âm"
+                }
+                title={
+                  isChatSuspended
+                    ? "Tài khoản đang bị khóa chat"
+                    : isVoiceRecording
+                      ? "Dừng ghi âm"
+                      : "Ghi tin nhắn thoại"
+                }
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                  isVoiceRecording
+                    ? "bg-red-500/20 text-red-300"
+                    : "text-gray-300 hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                {isVoiceRecording ? "⏹️" : "🎤"}
               </button>
 
               <div className="relative flex shrink-0 items-center">
@@ -2866,6 +3296,7 @@ export default function Home() {
                   sending ||
                   messagesLoading ||
                   isChatSuspended ||
+                  isVoiceRecording ||
                   (!messageInput.trim() &&
                     !attachmentFile)
                 }
