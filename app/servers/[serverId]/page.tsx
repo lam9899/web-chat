@@ -18,6 +18,9 @@ import ChannelRail from "../../channel-rail";
 import ChannelVoiceRoom, {
   type VoiceParticipantSnapshot,
 } from "../../channel-voice-room";
+import GameChannelRoom, {
+  type GameChannelSummary,
+} from "../../game-channel-room";
 import {
   type ChannelMessage,
   type DynamicChannel,
@@ -80,6 +83,9 @@ export default function ServerPage() {
     voiceParticipantsByChannel,
     setVoiceParticipantsByChannel,
   ] = useState<Record<string, VoiceParticipantSnapshot[]>>({});
+  const [gameSummaries, setGameSummaries] = useState<
+    Record<string, GameChannelSummary>
+  >({});
   const [currentUserId, setCurrentUserId] = useState("");
   const [clock, setClock] = useState<number | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<
@@ -119,7 +125,7 @@ export default function ServerPage() {
     useState(false);
   const [newChannelName, setNewChannelName] = useState("");
   const [newChannelType, setNewChannelType] =
-    useState<"text" | "voice">("text");
+    useState<"text" | "voice" | "game">("text");
 
   const [editChannel, setEditChannel] =
     useState<DynamicChannel | null>(null);
@@ -189,6 +195,38 @@ export default function ServerPage() {
     if (!error) setMembers((data ?? []) as ServerMember[]);
   }, [serverId]);
 
+  const loadGameSummaries = useCallback(async () => {
+    const { data, error } = await supabase.rpc(
+      "get_server_game_summaries",
+      { p_server_id: serverId },
+    );
+
+    if (error) {
+      if (
+        !error.message.toLowerCase().includes("does not exist") &&
+        !error.message.toLowerCase().includes("schema cache")
+      ) {
+        setErrorMessage(
+          `Không thể tải kênh game: ${error.message}`,
+        );
+      }
+      return;
+    }
+
+    const summaries = (data ?? []) as GameChannelSummary[];
+    setGameSummaries(
+      Object.fromEntries(
+        summaries.map((summary) => [
+          summary.channel_id,
+          {
+            ...summary,
+            player_count: Number(summary.player_count ?? 0),
+          },
+        ]),
+      ),
+    );
+  }, [serverId]);
+
   const loadMessages = useCallback(
     async (channelId: string) => {
       const { data, error } = await supabase.rpc(
@@ -234,6 +272,7 @@ export default function ServerPage() {
         loadServer(),
         loadChannels(),
         loadMembers(),
+        loadGameSummaries(),
       ]);
 
       if (active) setLoading(false);
@@ -242,7 +281,13 @@ export default function ServerPage() {
     return () => {
       active = false;
     };
-  }, [loadChannels, loadMembers, loadServer, router]);
+  }, [
+    loadChannels,
+    loadGameSummaries,
+    loadMembers,
+    loadServer,
+    router,
+  ]);
 
   // Trạng thái online toàn hệ thống (do CallProvider phát).
   useEffect(() => {
@@ -298,6 +343,27 @@ export default function ServerPage() {
         (channel) => channel.channel_type === "voice",
       ),
     [channels],
+  );
+
+  const gameChannels = useMemo(
+    () =>
+      channels.filter(
+        (channel) => channel.channel_type === "game",
+      ),
+    [channels],
+  );
+
+  const handleGameSummaryChange = useCallback(
+    (summary: GameChannelSummary) => {
+      setGameSummaries((current) => ({
+        ...current,
+        [summary.channel_id]: {
+          ...summary,
+          player_count: Number(summary.player_count ?? 0),
+        },
+      }));
+    },
+    [],
   );
 
   const loadVoiceParticipants = useCallback(async () => {
@@ -489,7 +555,12 @@ export default function ServerPage() {
       `/servers/${serverId}?channel=${selectedChannel.id}`,
     );
 
-    if (selectedChannel.channel_type === "voice") return;
+    if (
+      selectedChannel.channel_type === "voice" ||
+      selectedChannel.channel_type === "game"
+    ) {
+      return;
+    }
 
     let active = true;
 
@@ -555,6 +626,24 @@ export default function ServerPage() {
       .on(
         "postgres_changes",
         {
+          event: "*",
+          schema: "public",
+          table: "game_channel_states",
+        },
+        () => void loadGameSummaries(),
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "game_channel_players",
+        },
+        () => void loadGameSummaries(),
+      )
+      .on(
+        "postgres_changes",
+        {
           event: "INSERT",
           schema: "public",
           table: "channel_messages",
@@ -583,11 +672,27 @@ export default function ServerPage() {
   }, [
     currentUserId,
     loadChannels,
+    loadGameSummaries,
     loadMembers,
     loadMessages,
     loadServer,
     router,
     serverId,
+  ]);
+
+  useEffect(() => {
+    if (!currentUserId || gameChannels.length === 0) return;
+
+    const timer = window.setInterval(
+      () => void loadGameSummaries(),
+      20_000,
+    );
+
+    return () => window.clearInterval(timer);
+  }, [
+    currentUserId,
+    gameChannels.length,
+    loadGameSummaries,
   ]);
 
   useEffect(() => {
@@ -713,7 +818,10 @@ export default function ServerPage() {
       setShowCreateChannel(false);
       setNewChannelName("");
       setNewChannelType("text");
-      await loadChannels();
+      await Promise.all([
+        loadChannels(),
+        loadGameSummaries(),
+      ]);
       if (data) {
         const channelId = data as string;
         setOpenChannelIds((current) =>
@@ -1392,6 +1500,86 @@ export default function ServerPage() {
               </div>
             );
           })}
+
+          <div className="mb-2 mt-5 flex items-center justify-between px-1">
+            <span className="text-[11px] font-black uppercase tracking-wide text-gray-400">
+              Kênh game
+            </span>
+            {server.can_manage && (
+              <button
+                type="button"
+                onClick={() => {
+                  setNewChannelType("game");
+                  setNewChannelName("");
+                  setShowCreateChannel(true);
+                }}
+                title="Tạo kênh game"
+                className="flex h-5 w-5 items-center justify-center rounded text-lg text-gray-400 hover:text-white"
+              >
+                +
+              </button>
+            )}
+          </div>
+
+          {gameChannels.length === 0 && (
+            <p className="px-2 py-1 text-xs text-gray-500">
+              Chưa có kênh game.
+            </p>
+          )}
+
+          {gameChannels.map((channel) => {
+            const active = selectedChannelId === channel.id;
+            const gameSummary = gameSummaries[channel.id];
+            const playerCount = Number(
+              gameSummary?.player_count ?? 0,
+            );
+            const maximumPlayers =
+              gameSummary?.max_players ?? null;
+
+            return (
+              <div
+                key={channel.id}
+                className={`group mb-1 flex items-center rounded-lg transition ${
+                  active
+                    ? "bg-white/10 text-white"
+                    : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => selectChannel(channel)}
+                  className="flex min-w-0 flex-1 items-start gap-2 px-2 py-2 text-left"
+                >
+                  <span className="mt-0.5 text-base">🎮</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold">
+                      {channel.name}
+                    </span>
+                    <span className="block truncate text-[10px] text-gray-500">
+                      {playerCount}/{maximumPlayers ?? "—"} người
+                      {" · "}
+                      {gameSummary?.game_name ??
+                        "Chưa chọn game"}
+                    </span>
+                  </span>
+                </button>
+
+                {server.can_manage && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditChannel(channel);
+                      setEditChannelName(channel.name);
+                    }}
+                    title="Sửa kênh game"
+                    className="mr-1 hidden h-6 w-6 shrink-0 items-center justify-center rounded text-xs text-gray-400 hover:text-white group-hover:flex"
+                  >
+                    ⚙️
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         <div className="shrink-0 border-t border-black/25 p-3 md:hidden">
@@ -1493,7 +1681,9 @@ export default function ServerPage() {
                     <span className="shrink-0 text-sm">
                       {channel.channel_type === "voice"
                         ? "🔊"
-                        : "#"}
+                        : channel.channel_type === "game"
+                          ? "🎮"
+                          : "#"}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-sm font-bold">
                       {channel.name}
@@ -1584,6 +1774,16 @@ export default function ServerPage() {
                 onLeave={handleVoiceLeave}
               />
             )
+          ) : selectedChannel.channel_type === "game" ? (
+            <GameChannelRoom
+              key={selectedChannel.id}
+              serverId={server.id}
+              channelId={selectedChannel.id}
+              channelName={selectedChannel.name}
+              currentUserId={currentUserId}
+              canManage={server.can_manage}
+              onSummaryChange={handleGameSummaryChange}
+            />
           ) : messagesLoading ? (
             <p className="text-sm text-gray-400">
               Đang tải tin nhắn...
@@ -1657,7 +1857,8 @@ export default function ServerPage() {
         </div>
 
         {selectedChannel &&
-          selectedChannel.channel_type !== "voice" && (
+          selectedChannel.channel_type !== "voice" &&
+          selectedChannel.channel_type !== "game" && (
             <form
               onSubmit={sendMessage}
               className="shrink-0 border-t border-black/20 p-3 md:p-4"
@@ -1842,7 +2043,7 @@ export default function ServerPage() {
               </button>
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-2">
+            <div className="mt-5 grid grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => setNewChannelType("text")}
@@ -1865,6 +2066,17 @@ export default function ServerPage() {
               >
                 🔊 Kênh thoại
               </button>
+              <button
+                type="button"
+                onClick={() => setNewChannelType("game")}
+                className={`rounded-xl border px-3 py-3 text-sm font-bold ${
+                  newChannelType === "game"
+                    ? "border-indigo-400 bg-indigo-500/20"
+                    : "border-white/10 bg-[#1e1f22]"
+                }`}
+              >
+                🎮 Kênh game
+              </button>
             </div>
 
             <input
@@ -1876,7 +2088,9 @@ export default function ServerPage() {
               placeholder={
                 newChannelType === "voice"
                   ? "Tên kênh thoại, ví dụ: Phòng game"
-                  : "Tên kênh, ví dụ: thông báo"
+                  : newChannelType === "game"
+                    ? "Tên tự đặt, ví dụ: Chơi vui nhé"
+                    : "Tên kênh, ví dụ: thông báo"
               }
               className="mt-4 w-full rounded-xl bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
             />
@@ -1912,7 +2126,9 @@ export default function ServerPage() {
               <h2 className="text-xl font-black">
                 {editChannel.channel_type === "voice"
                   ? "🔊"
-                  : "#"}{" "}
+                  : editChannel.channel_type === "game"
+                    ? "🎮"
+                    : "#"}{" "}
                 {editChannel.name}
               </h2>
               <button

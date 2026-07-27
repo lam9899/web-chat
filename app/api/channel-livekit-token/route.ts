@@ -13,7 +13,7 @@ type RequestBody = {
 type ChannelRow = {
   id: string;
   name: string;
-  channel_type: "text" | "voice" | "both";
+  channel_type: "text" | "voice" | "both" | "game";
 };
 
 export async function POST(request: NextRequest) {
@@ -137,7 +137,8 @@ export async function POST(request: NextRequest) {
 
     if (
       channel.channel_type !== "voice" &&
-      channel.channel_type !== "both"
+      channel.channel_type !== "both" &&
+      channel.channel_type !== "game"
     ) {
       return NextResponse.json(
         {

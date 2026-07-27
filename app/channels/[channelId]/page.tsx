@@ -65,7 +65,7 @@ export default function DynamicChannelPage() {
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editType, setEditType] =
-    useState<"text" | "voice" | "both">("text");
+    useState<"text" | "voice" | "both" | "game">("text");
   const [editVisibility, setEditVisibility] =
     useState<"public" | "private">("private");
   const [editLocked, setEditLocked] = useState(false);
@@ -739,7 +739,11 @@ export default function DynamicChannelPage() {
                       value={editType}
                       onChange={(event) =>
                         setEditType(
-                          event.target.value as "text" | "voice" | "both",
+                          event.target.value as
+                            | "text"
+                            | "voice"
+                            | "both"
+                            | "game",
                         )
                       }
                       className="rounded-xl bg-[#1e1f22] px-4 py-3"
@@ -747,6 +751,7 @@ export default function DynamicChannelPage() {
                       <option value="text">Văn bản</option>
                       <option value="voice">Thoại</option>
                       <option value="both">Cả hai</option>
+                      <option value="game">Game</option>
                     </select>
                     <select
                       value={editVisibility}

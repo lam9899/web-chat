@@ -6,7 +6,7 @@ export type DynamicChannel = {
   avatar_path: string | null;
   owner_id: string;
   visibility: "public" | "private";
-  channel_type: "text" | "voice" | "both";
+  channel_type: "text" | "voice" | "both" | "game";
   is_locked: boolean;
   is_system: boolean;
   created_at: string;
@@ -69,7 +69,7 @@ export type ChannelInvite = {
   channel_id: string;
   channel_name: string;
   channel_avatar_path: string | null;
-  channel_type: "text" | "voice" | "both";
+  channel_type: "text" | "voice" | "both" | "game";
   sender_id: string;
   sender_username: string;
   sender_avatar_url: string | null;
@@ -115,5 +115,6 @@ export function channelTypeLabel(
 ) {
   if (value === "voice") return "Kênh thoại";
   if (value === "both") return "Văn bản và thoại";
+  if (value === "game") return "Kênh game";
   return "Kênh văn bản";
 }

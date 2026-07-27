@@ -20,7 +20,7 @@ type RequestBody = {
 
 type VisibleChannel = {
   id: string;
-  channel_type: "text" | "voice" | "both";
+  channel_type: "text" | "voice" | "both" | "game";
 };
 
 type ProfileRow = {
@@ -167,7 +167,8 @@ export async function POST(request: NextRequest) {
         if (
           dynamicChannelIds.includes(channel.id) &&
           (channel.channel_type === "voice" ||
-            channel.channel_type === "both")
+            channel.channel_type === "both" ||
+            channel.channel_type === "game")
         ) {
           allowedChannelIds.add(channel.id);
         }
