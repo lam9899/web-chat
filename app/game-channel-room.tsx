@@ -33,6 +33,7 @@ type GameCatalogItem = {
   max_players: number;
   category: string;
   sort_order: number;
+  created_at: string;
 };
 
 type GamePlayer = {
@@ -66,6 +67,17 @@ type InvitableFriend = {
   role: "admin" | "moderator" | "member";
 };
 
+type GamePickerTabId =
+  | "all"
+  | "new"
+  | "hot"
+  | `players-${number}`;
+
+type GamePickerTab = {
+  id: GamePickerTabId;
+  label: string;
+};
+
 const GAME_BACKGROUNDS: Record<string, string> = {
   racing:
     "from-orange-500 via-red-500 to-fuchsia-700",
@@ -79,6 +91,13 @@ const GAME_BACKGROUNDS: Record<string, string> = {
     "from-lime-400 via-emerald-600 to-green-950",
   archery:
     "from-amber-400 via-orange-600 to-stone-900",
+};
+
+const GAME_CATEGORY_LABELS: Record<string, string> = {
+  action: "Hành động",
+  arcade: "Giải trí",
+  racing: "Đua xe",
+  sports: "Thể thao",
 };
 
 function gameBackground(gameKey: string | null | undefined) {
@@ -119,6 +138,10 @@ export default function GameChannelRoom({
     useState<number | null>(null);
   const [showFriendPicker, setShowFriendPicker] =
     useState(false);
+  const [showGamePicker, setShowGamePicker] =
+    useState(false);
+  const [gamePickerTab, setGamePickerTab] =
+    useState<GamePickerTabId>("all");
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -134,7 +157,7 @@ export default function GameChannelRoom({
       supabase
         .from("game_catalog")
         .select(
-          "game_key, name, icon, description, max_players, category, sort_order",
+          "game_key, name, icon, description, max_players, category, sort_order, created_at",
         )
         .eq("is_active", true)
         .order("sort_order", { ascending: true }),
@@ -277,6 +300,83 @@ export default function GameChannelRoom({
     [catalog, summary?.game_key],
   );
 
+  const orderedCatalog = useMemo(
+    () =>
+      [...catalog].sort(
+        (first, second) =>
+          Number(first.sort_order) -
+          Number(second.sort_order),
+      ),
+    [catalog],
+  );
+
+  const gamePickerTabs = useMemo<GamePickerTab[]>(() => {
+    const playerCounts = Array.from(
+      new Set([
+        2,
+        4,
+        8,
+        16,
+        ...catalog.map((game) => Number(game.max_players)),
+      ]),
+    )
+      .filter((count) => Number.isFinite(count) && count >= 2)
+      .sort((first, second) => first - second);
+
+    return [
+      { id: "all", label: "Tất cả game" },
+      { id: "new", label: "Game mới nhất" },
+      { id: "hot", label: "Game hot" },
+      ...playerCounts.map((count) => ({
+        id: `players-${count}` as const,
+        label: `Game ${count} người`,
+      })),
+    ];
+  }, [catalog]);
+
+  const filteredGames = useMemo(() => {
+    if (gamePickerTab === "new") {
+      return [...orderedCatalog]
+        .sort(
+          (first, second) =>
+            new Date(second.created_at).getTime() -
+              new Date(first.created_at).getTime() ||
+            Number(second.sort_order) -
+              Number(first.sort_order),
+        )
+        .slice(0, 6);
+    }
+
+    if (gamePickerTab === "hot") {
+      return orderedCatalog.slice(0, 4);
+    }
+
+    if (gamePickerTab.startsWith("players-")) {
+      const playerCount = Number(
+        gamePickerTab.replace("players-", ""),
+      );
+      return orderedCatalog.filter(
+        (game) => Number(game.max_players) === playerCount,
+      );
+    }
+
+    return orderedCatalog;
+  }, [gamePickerTab, orderedCatalog]);
+
+  useEffect(() => {
+    if (!showGamePicker) return;
+
+    function closeWithEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setShowGamePicker(false);
+      }
+    }
+
+    window.addEventListener("keydown", closeWithEscape);
+    return () =>
+      window.removeEventListener("keydown", closeWithEscape);
+  }, [showGamePicker]);
+
   async function chooseGame(gameKey: string) {
     if (!canManage || working) return;
 
@@ -284,6 +384,11 @@ export default function GameChannelRoom({
       (item) => item.game_key === gameKey,
     );
     if (!game) return;
+
+    if (summary?.game_key === gameKey) {
+      setShowGamePicker(false);
+      return;
+    }
 
     if (
       summary?.game_key &&
@@ -307,7 +412,10 @@ export default function GameChannelRoom({
     );
 
     if (error) setErrorMessage(error.message);
-    else await loadLobby();
+    else {
+      await loadLobby();
+      setShowGamePicker(false);
+    }
     setWorking(false);
   }
 
@@ -469,7 +577,7 @@ export default function GameChannelRoom({
     summary?.status !== "playing";
 
   return (
-    <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-4">
+    <div className="flex w-full min-w-0 flex-col gap-4">
       <header className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-[#202225] p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -487,6 +595,14 @@ export default function GameChannelRoom({
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setShowGamePicker(true)}
+            className="rounded-xl bg-indigo-500 px-4 py-2.5 font-black text-white transition hover:bg-indigo-400"
+          >
+            🎮 Chọn game
+          </button>
+
           {currentPlayer && (
             <>
               {isRoomHost && (
@@ -543,49 +659,8 @@ export default function GameChannelRoom({
         </p>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-[210px_minmax(0,1fr)_240px]">
-        <aside className="rounded-2xl bg-[#202225] p-3">
-          <h2 className="px-1 text-xs font-black uppercase tracking-wide text-amber-400">
-            Game hay nhất
-          </h2>
-          <div className="mt-3 space-y-2">
-            {catalog.slice(0, 4).map((game) => {
-              const active =
-                summary?.game_key === game.game_key;
-              return (
-                <button
-                  key={game.game_key}
-                  type="button"
-                  onClick={() => void chooseGame(game.game_key)}
-                  disabled={!canManage || working}
-                  title={
-                    canManage
-                      ? `Chọn ${game.name}`
-                      : "Chỉ chủ hoặc quản lý server được chọn game"
-                  }
-                  className={`w-full overflow-hidden rounded-xl border text-left transition ${
-                    active
-                      ? "border-indigo-400 ring-2 ring-indigo-400/30"
-                      : "border-white/10 hover:border-white/25"
-                  } disabled:cursor-default`}
-                >
-                  <span
-                    className={`flex h-20 items-center justify-center bg-gradient-to-br text-4xl ${gameBackground(
-                      game.game_key,
-                    )}`}
-                  >
-                    {game.icon}
-                  </span>
-                  <span className="block truncate bg-[#2b2d31] px-2 py-2 text-center text-xs font-bold">
-                    {game.name}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
-
-        <section className="overflow-hidden rounded-2xl border border-white/10 bg-[#202225]">
+      <div className="w-full min-w-0">
+        <section className="w-full min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-[#202225]">
           {selectedGame ? (
             selectedGame.game_key === "mini-golf" ? (
               <MiniGolfGame
@@ -595,52 +670,52 @@ export default function GameChannelRoom({
               />
             ) : (
               <>
-              <div
-                className={`relative flex min-h-[420px] items-center justify-center overflow-hidden bg-gradient-to-br p-8 text-center ${gameBackground(
-                  selectedGame.game_key,
-                )}`}
-              >
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.55)_100%)]" />
-                <div className="relative z-10">
-                  <div className="text-8xl drop-shadow-2xl">
-                    {selectedGame.icon}
-                  </div>
-                  <h2 className="mt-5 text-4xl font-black drop-shadow-lg">
-                    {selectedGame.name}
-                  </h2>
-                  <p className="mx-auto mt-3 max-w-lg text-white/80">
-                    {selectedGame.description}
-                  </p>
-                  <div className="mx-auto mt-6 inline-flex rounded-full bg-black/35 px-4 py-2 text-sm font-bold backdrop-blur-sm">
-                    Khung trò chơi đã sẵn sàng để tích hợp game
-                    nhiều người
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h3 className="text-lg font-black">
-                    {selectedGame.icon} {selectedGame.name}
-                  </h3>
-                  <p className="text-xs text-gray-400">
-                    Tối đa {selectedGame.max_players} người ·
-                    Phòng chờ thời gian thực
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled
-                  title="Nút này sẽ hoạt động khi mã game được gắn vào"
-                  className="rounded-xl bg-orange-500 px-5 py-2.5 font-black opacity-60"
+                <div
+                  className={`relative flex min-h-[520px] items-center justify-center overflow-hidden bg-gradient-to-br p-8 text-center ${gameBackground(
+                    selectedGame.game_key,
+                  )}`}
                 >
-                  ▶ Game đang được phát triển
-                </button>
-              </div>
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.55)_100%)]" />
+                  <div className="relative z-10">
+                    <div className="text-8xl drop-shadow-2xl">
+                      {selectedGame.icon}
+                    </div>
+                    <h2 className="mt-5 text-4xl font-black drop-shadow-lg">
+                      {selectedGame.name}
+                    </h2>
+                    <p className="mx-auto mt-3 max-w-lg text-white/80">
+                      {selectedGame.description}
+                    </p>
+                    <div className="mx-auto mt-6 inline-flex rounded-full bg-black/35 px-4 py-2 text-sm font-bold backdrop-blur-sm">
+                      Khung trò chơi đã sẵn sàng để tích hợp
+                      game nhiều người
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="text-lg font-black">
+                      {selectedGame.icon} {selectedGame.name}
+                    </h3>
+                    <p className="text-xs text-gray-400">
+                      Tối đa {selectedGame.max_players} người ·
+                      Phòng chờ thời gian thực
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled
+                    title="Nút này sẽ hoạt động khi mã game được gắn vào"
+                    className="rounded-xl bg-orange-500 px-5 py-2.5 font-black opacity-60"
+                  >
+                    ▶ Game đang được phát triển
+                  </button>
+                </div>
               </>
             )
           ) : (
-            <div className="flex min-h-[520px] items-center justify-center p-8 text-center">
+            <div className="flex min-h-[560px] items-center justify-center p-8 text-center">
               <div>
                 <div className="text-7xl">🎮</div>
                 <h2 className="mt-5 text-3xl font-black">
@@ -648,120 +723,21 @@ export default function GameChannelRoom({
                 </h2>
                 <p className="mx-auto mt-3 max-w-md text-gray-400">
                   {canManage
-                    ? "Chọn một game ở danh sách bên trái hoặc bên phải để mở phòng chờ."
-                    : "Chờ chủ server hoặc quản lý chọn game cho kênh này."}
+                    ? "Bấm Chọn game để mở thư viện và chọn trò chơi cho kênh này."
+                    : "Bạn có thể xem thư viện game; chủ server hoặc quản lý sẽ chọn game cho kênh."}
                 </p>
+                <button
+                  type="button"
+                  onClick={() => setShowGamePicker(true)}
+                  className="mt-6 rounded-xl bg-indigo-500 px-5 py-3 font-black hover:bg-indigo-400"
+                >
+                  🎮 Chọn game
+                </button>
               </div>
             </div>
           )}
         </section>
 
-        <aside className="space-y-4">
-          <section className="rounded-2xl bg-[#202225] p-3">
-            <h2 className="px-1 text-xs font-black uppercase tracking-wide text-amber-400">
-              Game mới nhất
-            </h2>
-            <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-1">
-              {catalog.slice(4).map((game) => (
-                <button
-                  key={game.game_key}
-                  type="button"
-                  onClick={() => void chooseGame(game.game_key)}
-                  disabled={!canManage || working}
-                  title={
-                    canManage
-                      ? `Chọn ${game.name}`
-                      : "Chỉ chủ hoặc quản lý server được chọn game"
-                  }
-                  className={`flex items-center gap-3 rounded-xl border p-2 text-left ${
-                    summary?.game_key === game.game_key
-                      ? "border-indigo-400 bg-indigo-500/10"
-                      : "border-white/10 bg-[#2b2d31] hover:border-white/25"
-                  } disabled:cursor-default`}
-                >
-                  <span
-                    className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-2xl ${gameBackground(
-                      game.game_key,
-                    )}`}
-                  >
-                    {game.icon}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-xs font-bold">
-                      {game.name}
-                    </span>
-                    <span className="block text-[10px] text-gray-500">
-                      Tối đa {game.max_players} người
-                    </span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-2xl bg-[#202225] p-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-black uppercase tracking-wide text-gray-400">
-                Người chơi
-              </h2>
-              <span className="rounded-full bg-green-500/15 px-2 py-0.5 text-[10px] font-black text-green-300">
-                {players.length}/{maximumPlayers ?? "—"}
-              </span>
-            </div>
-
-            {players.length === 0 ? (
-              <p className="py-6 text-center text-xs text-gray-500">
-                Chưa có người tham gia.
-              </p>
-            ) : (
-              <div className="mt-3 space-y-1">
-                {players.map((player) => (
-                  <div
-                    key={player.id}
-                    className="flex items-center gap-2 rounded-xl bg-[#2b2d31] p-2"
-                  >
-                    {player.avatar_url ? (
-                      <img
-                        src={player.avatar_url}
-                        alt={player.username}
-                        className="h-8 w-8 rounded-full object-cover"
-                      />
-                    ) : (
-                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-500 text-xs font-black">
-                        {player.username
-                          .charAt(0)
-                          .toUpperCase()}
-                      </span>
-                    )}
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1">
-                        <MemberBadge role={player.role} />
-                        <span className="truncate text-xs font-bold">
-                          {player.username}
-                        </span>
-                      </span>
-                      <span className="block text-[9px] text-gray-500">
-                        {formatPublicId(player.public_id)}
-                      </span>
-                    </span>
-                    <span
-                      title={
-                        player.is_ready
-                          ? "Đã sẵn sàng"
-                          : "Chưa sẵn sàng"
-                      }
-                      className={`h-2.5 w-2.5 rounded-full ${
-                        player.is_ready
-                          ? "bg-green-400"
-                          : "bg-gray-600"
-                      }`}
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        </aside>
       </div>
 
       {selectedGame && maximumPlayers !== null && (
@@ -953,6 +929,157 @@ export default function GameChannelRoom({
         voiceOnly
         compact
       />
+
+      {showGamePicker && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6">
+          <button
+            type="button"
+            aria-label="Đóng thư viện game"
+            onClick={() => setShowGamePicker(false)}
+            className="absolute inset-0"
+          />
+
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="game-picker-title"
+            className="relative z-10 flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#202225] shadow-2xl"
+          >
+            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 px-4 py-4 sm:px-6">
+              <div className="min-w-0">
+                <h2
+                  id="game-picker-title"
+                  className="text-2xl font-black"
+                >
+                  🎮 Chọn game
+                </h2>
+                <p className="mt-1 text-sm text-gray-400">
+                  {canManage
+                    ? "Chọn trò chơi sẽ mở trong kênh game này."
+                    : "Bạn có thể xem thư viện; chỉ chủ hoặc quản lý server được đổi game."}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGamePicker(false)}
+                aria-label="Đóng"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-2xl transition hover:bg-white/15"
+              >
+                ×
+              </button>
+            </header>
+
+            <div
+              role="tablist"
+              aria-label="Thể loại game"
+              className="flex shrink-0 gap-2 overflow-x-auto border-b border-white/10 px-4 py-3 [scrollbar-width:thin] sm:px-6"
+            >
+              {gamePickerTabs.map((tab) => {
+                const active = gamePickerTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setGamePickerTab(tab.id)}
+                    className={`shrink-0 rounded-full px-4 py-2 text-sm font-black transition ${
+                      active
+                        ? "bg-indigo-500 text-white"
+                        : "bg-white/5 text-gray-300 hover:bg-white/10"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+              {filteredGames.length === 0 ? (
+                <div className="flex min-h-64 items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/10 p-8 text-center text-gray-400">
+                  Chưa có game trong thể loại này.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {filteredGames.map((game) => {
+                    const active =
+                      summary?.game_key === game.game_key;
+                    return (
+                      <button
+                        key={game.game_key}
+                        type="button"
+                        onClick={() =>
+                          void chooseGame(game.game_key)
+                        }
+                        disabled={!canManage || working}
+                        title={
+                          canManage
+                            ? active
+                              ? `${game.name} đang được chọn`
+                              : `Chọn ${game.name}`
+                            : "Chỉ chủ hoặc quản lý server được chọn game"
+                        }
+                        className={`group overflow-hidden rounded-2xl border text-left transition ${
+                          active
+                            ? "border-indigo-400 bg-indigo-500/10 ring-2 ring-indigo-400/25"
+                            : "border-white/10 bg-[#2b2d31] hover:-translate-y-0.5 hover:border-white/25"
+                        } disabled:cursor-default disabled:hover:translate-y-0`}
+                      >
+                        <span
+                          className={`relative flex h-32 items-center justify-center bg-gradient-to-br text-6xl ${gameBackground(
+                            game.game_key,
+                          )}`}
+                        >
+                          {game.icon}
+                          {active && (
+                            <span className="absolute right-3 top-3 rounded-full bg-indigo-500 px-2.5 py-1 text-[10px] font-black text-white shadow-lg">
+                              Đang chọn
+                            </span>
+                          )}
+                        </span>
+
+                        <span className="block p-4">
+                          <span className="flex items-start justify-between gap-3">
+                            <span className="truncate text-base font-black">
+                              {game.name}
+                            </span>
+                            <span className="shrink-0 rounded-full bg-green-500/15 px-2 py-1 text-[10px] font-black text-green-300">
+                              {game.max_players} người
+                            </span>
+                          </span>
+                          <span className="mt-1 block text-[10px] font-bold uppercase tracking-wide text-indigo-300">
+                            {GAME_CATEGORY_LABELS[game.category] ??
+                              game.category}
+                          </span>
+                          <span className="mt-2 block min-h-10 text-xs leading-5 text-gray-400">
+                            {game.description}
+                          </span>
+                          <span
+                            className={`mt-4 block rounded-xl px-3 py-2 text-center text-xs font-black ${
+                              active
+                                ? "bg-indigo-500 text-white"
+                                : canManage
+                                  ? "bg-white/10 text-gray-100 group-hover:bg-indigo-500"
+                                  : "bg-white/5 text-gray-500"
+                            }`}
+                          >
+                            {active
+                              ? "✓ Đang chọn"
+                              : canManage
+                                ? "Chọn game"
+                                : "Chỉ xem"}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
 
       {selectedSeatIndex !== null && (
         <div className="fixed inset-0 z-[280] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">

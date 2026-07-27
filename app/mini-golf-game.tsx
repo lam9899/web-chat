@@ -1237,7 +1237,7 @@ export default function MiniGolfGame({
   return (
     <div
       ref={gameSurfaceRef}
-      className="bg-[#111827] text-white"
+      className="w-full min-w-0 overflow-hidden bg-[#111827] text-white"
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-[#0f172a] px-4 py-3">
         <div>
