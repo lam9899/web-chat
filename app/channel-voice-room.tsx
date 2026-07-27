@@ -41,6 +41,7 @@ type Props = {
   channelId: string;
   channelName: string;
   voiceOnly?: boolean;
+  compact?: boolean;
   joinRequestId?: number;
   onParticipantsChange?: (
     channelId: string,
@@ -120,14 +121,132 @@ function VoiceMember({ participant, last }: { participant: Participant; last: bo
   );
 }
 
+function CompactVoiceAvatar({
+  participant,
+}: {
+  participant: Participant;
+}) {
+  const avatar = getAvatar(participant);
+  const speaking = participant.isSpeaking;
+  const muted = !participant.isMicrophoneEnabled;
+  const name = participant.name || participant.identity;
+  const status = speaking
+    ? "Đang nói"
+    : muted
+      ? "Đã tắt micro"
+      : "Đang nghe";
+
+  return (
+    <span
+      title={`${name} · ${status}`}
+      className="relative shrink-0"
+    >
+      {avatar ? (
+        <img
+          src={avatar}
+          alt={name}
+          className={`h-10 w-10 rounded-full object-cover transition ${
+            speaking
+              ? "ring-3 ring-green-400 ring-offset-2 ring-offset-[#1e1f22]"
+              : "ring-1 ring-white/15"
+          }`}
+        />
+      ) : (
+        <span
+          className={`flex h-10 w-10 items-center justify-center rounded-full bg-indigo-500 text-sm font-black ${
+            speaking
+              ? "ring-3 ring-green-400 ring-offset-2 ring-offset-[#1e1f22]"
+              : "ring-1 ring-white/15"
+          }`}
+        >
+          {name.charAt(0).toUpperCase()}
+        </span>
+      )}
+
+      <span
+        aria-label={status}
+        className={`absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2 border-[#1e1f22] ${
+          speaking
+            ? "bg-green-400"
+            : muted
+              ? "bg-red-500"
+              : "bg-gray-400"
+        }`}
+      />
+    </span>
+  );
+}
+
+function DeviceSettingsDialog({
+  onClose,
+}: {
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[260] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+    >
+      <section className="w-full max-w-md rounded-3xl border border-white/10 bg-[#1b1c21] p-5 shadow-2xl [&_.lk-button]:!flex [&_.lk-button]:!h-12 [&_.lk-button]:!w-full [&_.lk-button]:!items-center [&_.lk-button]:!justify-between [&_.lk-button]:!rounded-xl [&_.lk-button]:!border-white/10 [&_.lk-button]:!bg-white/10 [&_.lk-button]:!px-4 [&_.lk-device-menu]:!z-[400]">
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="text-lg font-black">
+              Cài đặt thiết bị
+            </h3>
+            <p className="mt-1 text-sm text-gray-400">
+              Chọn micro, loa và camera.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-xl"
+          >
+            ×
+          </button>
+        </div>
+        <div className="mt-5 space-y-4">
+          <div>
+            <p className="mb-2 text-xs font-black uppercase text-gray-400">
+              Microphone
+            </p>
+            <MediaDeviceMenu kind="audioinput">
+              🎙 Chọn microphone
+            </MediaDeviceMenu>
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-black uppercase text-gray-400">
+              Loa
+            </p>
+            <MediaDeviceMenu kind="audiooutput">
+              🔊 Chọn loa
+            </MediaDeviceMenu>
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-black uppercase text-gray-400">
+              Camera
+            </p>
+            <MediaDeviceMenu kind="videoinput">
+              📷 Chọn camera
+            </MediaDeviceMenu>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function VoiceStage({
   channelId,
   channelName,
+  compact,
   onLeave,
   onParticipantsChange,
 }: {
   channelId: string;
   channelName: string;
+  compact: boolean;
   onLeave: () => void;
   onParticipantsChange?: Props["onParticipantsChange"];
 }) {
@@ -181,6 +300,82 @@ function VoiceStage({
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, [showDevices]);
+
+  if (compact) {
+    return (
+      <>
+        <section className="flex min-h-16 items-center gap-3 overflow-hidden rounded-2xl border border-white/10 bg-[#1e1f22] px-3 py-2 shadow-xl">
+          <div className="flex min-w-0 flex-1 items-center gap-3 overflow-x-auto py-1 pr-2 [scrollbar-width:thin]">
+            {ordered.map((participant) => (
+              <CompactVoiceAvatar
+                key={participant.identity}
+                participant={participant}
+              />
+            ))}
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2 border-l border-white/10 pl-3 [&_.lk-button]:!h-10 [&_.lk-button]:!w-10 [&_.lk-button]:!min-w-10 [&_.lk-button]:!rounded-xl [&_.lk-button]:!border-white/10 [&_.lk-button]:!bg-white/10 [&_.lk-button]:!p-0 [&_.lk-button-group-menu]:!hidden [&_.lk-control-bar]:!gap-2 [&_.lk-control-bar]:!border-0 [&_.lk-control-bar]:!bg-transparent [&_.lk-control-bar]:!p-0">
+            <ControlBar
+              variation="minimal"
+              saveUserChoices
+              controls={{
+                microphone: true,
+                camera: false,
+                screenShare: false,
+                chat: false,
+                leave: false,
+              }}
+            />
+            <button
+              type="button"
+              onClick={() =>
+                setSpeakerMuted((value) => !value)
+              }
+              title={
+                speakerMuted ? "Bật âm thanh" : "Tắt âm thanh"
+              }
+              aria-label={
+                speakerMuted ? "Bật âm thanh" : "Tắt âm thanh"
+              }
+              className={`flex h-10 w-10 items-center justify-center rounded-xl border ${
+                speakerMuted
+                  ? "border-red-400/30 bg-red-500/20"
+                  : "border-white/10 bg-white/10"
+              }`}
+            >
+              {speakerMuted ? "🔇" : "🔊"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDevices(true)}
+              title="Cài đặt thiết bị"
+              aria-label="Cài đặt thiết bị"
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/10"
+            >
+              ⚙️
+            </button>
+            <button
+              type="button"
+              onClick={onLeave}
+              title="Rời phòng thoại"
+              aria-label="Rời phòng thoại"
+              className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-600 hover:bg-red-500"
+            >
+              📵
+            </button>
+          </div>
+        </section>
+
+        {showDevices && (
+          <DeviceSettingsDialog
+            onClose={() => setShowDevices(false)}
+          />
+        )}
+
+        <RoomAudioRenderer muted={speakerMuted} />
+      </>
+    );
+  }
 
   return (
     <section className="mb-4 overflow-hidden rounded-2xl border border-white/10 bg-[#232428] shadow-xl">
@@ -257,22 +452,9 @@ function VoiceStage({
       )}
 
       {showDevices && (
-        <div className="fixed inset-0 z-[260] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
-          <section className="w-full max-w-md rounded-3xl border border-white/10 bg-[#1b1c21] p-5 shadow-2xl [&_.lk-button]:!flex [&_.lk-button]:!h-12 [&_.lk-button]:!w-full [&_.lk-button]:!items-center [&_.lk-button]:!justify-between [&_.lk-button]:!rounded-xl [&_.lk-button]:!border-white/10 [&_.lk-button]:!bg-white/10 [&_.lk-button]:!px-4 [&_.lk-device-menu]:!z-[400]">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-lg font-black">Cài đặt thiết bị</h3>
-                <p className="mt-1 text-sm text-gray-400">Chọn micro, loa và camera.</p>
-              </div>
-              <button type="button" onClick={() => setShowDevices(false)} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-xl">×</button>
-            </div>
-            <div className="mt-5 space-y-4">
-              <div><p className="mb-2 text-xs font-black uppercase text-gray-400">Microphone</p><MediaDeviceMenu kind="audioinput">🎙 Chọn microphone</MediaDeviceMenu></div>
-              <div><p className="mb-2 text-xs font-black uppercase text-gray-400">Loa</p><MediaDeviceMenu kind="audiooutput">🔊 Chọn loa</MediaDeviceMenu></div>
-              <div><p className="mb-2 text-xs font-black uppercase text-gray-400">Camera</p><MediaDeviceMenu kind="videoinput">📷 Chọn camera</MediaDeviceMenu></div>
-            </div>
-          </section>
-        </div>
+        <DeviceSettingsDialog
+          onClose={() => setShowDevices(false)}
+        />
       )}
 
       <RoomAudioRenderer muted={speakerMuted} />
@@ -283,6 +465,7 @@ function VoiceStage({
 export default function ChannelVoiceRoom({
   channelId,
   channelName,
+  compact = false,
   joinRequestId = 0,
   onParticipantsChange,
   onLeave,
@@ -340,6 +523,31 @@ export default function ChannelVoiceRoom({
   }, [channelId, onLeave, onParticipantsChange]);
 
   if (!connection) {
+    if (compact) {
+      return (
+        <section className="flex min-h-16 items-center gap-3 rounded-2xl border border-white/10 bg-[#1e1f22] px-3 py-2 shadow-xl">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs text-gray-400">
+              Chưa kết nối thoại trong game
+            </p>
+            {errorMessage && (
+              <p className="mt-1 truncate text-xs text-red-300">
+                {errorMessage}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => void joinRoom()}
+            disabled={joining}
+            className="h-10 shrink-0 rounded-xl bg-green-600 px-4 text-sm font-black hover:bg-green-500 disabled:opacity-60"
+          >
+            {joining ? "Đang kết nối..." : "🎙 Kết nối thoại"}
+          </button>
+        </section>
+      );
+    }
+
     return (
       <section className="mb-4 overflow-hidden rounded-2xl border border-white/10 bg-[#232428] shadow-xl">
         <div className="flex items-center gap-2 border-b border-white/10 bg-[#1e1f22] px-4 py-3">
@@ -375,6 +583,7 @@ export default function ChannelVoiceRoom({
       <VoiceStage
         channelId={channelId}
         channelName={channelName}
+        compact={compact}
         onLeave={leaveRoom}
         onParticipantsChange={onParticipantsChange}
       />

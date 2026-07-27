@@ -381,12 +381,6 @@ export default function GameChannelRoom({
         </p>
       )}
 
-      <ChannelVoiceRoom
-        channelId={channelId}
-        channelName={`${channelName} · Trò chuyện khi chơi`}
-        voiceOnly
-      />
-
       <div className="grid gap-4 xl:grid-cols-[210px_minmax(0,1fr)_240px]">
         <aside className="rounded-2xl bg-[#202225] p-3">
           <h2 className="px-1 text-xs font-black uppercase tracking-wide text-amber-400">
@@ -599,6 +593,13 @@ export default function GameChannelRoom({
           </section>
         </aside>
       </div>
+
+      <ChannelVoiceRoom
+        channelId={channelId}
+        channelName={`${channelName} · Trò chuyện khi chơi`}
+        voiceOnly
+        compact
+      />
     </div>
   );
 }
