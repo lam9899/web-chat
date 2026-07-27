@@ -45,7 +45,7 @@ insert into public.game_catalog(
 )
 values
   ('racing', 'Đua xe', '🏎️', 'Đua tốc độ cùng bạn bè.', 8, 'racing', 10),
-  ('mini-golf', 'Mini Golf', '⛳', 'Mini Golf nhiều người theo lượt.', 4, 'sports', 20),
+  ('mini-golf', 'Mini Golf', '⛳', 'Mini Golf 9 hố nhiều người, ít gậy nhất chiến thắng.', 16, 'sports', 20),
   ('eight-ball', 'Bi-a', '🎱', 'Bi-a 8 bóng dành cho hai người.', 2, 'sports', 30),
   ('fighting', 'Đối kháng', '🥊', 'Thi đấu đối kháng một chọi một.', 2, 'action', 40),
   ('football', 'Sút bóng', '⚽', 'Thi đấu sút bóng tính điểm.', 4, 'sports', 50),

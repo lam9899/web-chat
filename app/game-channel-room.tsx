@@ -11,6 +11,7 @@ import MemberBadge, {
 } from "@/components/member-badge";
 import { createClient } from "@/utils/supabase/client";
 import ChannelVoiceRoom from "./channel-voice-room";
+import MiniGolfGame from "./mini-golf-game";
 
 const supabase = createClient();
 
@@ -579,7 +580,14 @@ export default function GameChannelRoom({
 
         <section className="overflow-hidden rounded-2xl border border-white/10 bg-[#202225]">
           {selectedGame ? (
-            <>
+            selectedGame.game_key === "mini-golf" ? (
+              <MiniGolfGame
+                channelId={channelId}
+                currentUserId={currentUserId}
+                onMatchChange={loadLobby}
+              />
+            ) : (
+              <>
               <div
                 className={`relative flex min-h-[420px] items-center justify-center overflow-hidden bg-gradient-to-br p-8 text-center ${gameBackground(
                   selectedGame.game_key,
@@ -622,7 +630,8 @@ export default function GameChannelRoom({
                   ▶ Game đang được phát triển
                 </button>
               </div>
-            </>
+              </>
+            )
           ) : (
             <div className="flex min-h-[520px] items-center justify-center p-8 text-center">
               <div>
