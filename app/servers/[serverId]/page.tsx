@@ -111,6 +111,10 @@ export default function ServerPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [loadErrorMessage, setLoadErrorMessage] = useState("");
   const [showSidebar, setShowSidebar] = useState(false);
+  const [channelsPanelCollapsed, setChannelsPanelCollapsed] =
+    useState(false);
+  const [membersPanelCollapsed, setMembersPanelCollapsed] =
+    useState(false);
 
   const [showInvite, setShowInvite] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
@@ -1172,7 +1176,17 @@ export default function ServerPage() {
     Boolean(selectedChannel?.is_locked) && !server.can_manage;
 
   return (
-    <main className="grid h-screen overflow-hidden bg-[#313338] text-white md:grid-cols-[84px_260px_minmax(0,1fr)] lg:grid-cols-[84px_260px_minmax(0,1fr)_260px]">
+    <main
+      className={`grid h-screen overflow-hidden bg-[#313338] text-white transition-[grid-template-columns] duration-200 ${
+        channelsPanelCollapsed
+          ? membersPanelCollapsed
+            ? "md:grid-cols-[84px_64px_minmax(0,1fr)] lg:grid-cols-[84px_64px_minmax(0,1fr)_64px]"
+            : "md:grid-cols-[84px_64px_minmax(0,1fr)] lg:grid-cols-[84px_64px_minmax(0,1fr)_260px]"
+          : membersPanelCollapsed
+            ? "md:grid-cols-[84px_260px_minmax(0,1fr)] lg:grid-cols-[84px_260px_minmax(0,1fr)_64px]"
+            : "md:grid-cols-[84px_260px_minmax(0,1fr)] lg:grid-cols-[84px_260px_minmax(0,1fr)_260px]"
+      }`}
+    >
       <ChannelRail activeServerId={server.id} />
 
       {/* Cột kênh của server */}
@@ -1181,11 +1195,128 @@ export default function ServerPage() {
           showSidebar ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="relative shrink-0 border-b border-black/25">
+        {channelsPanelCollapsed && (
+          <div className="hidden h-full min-h-0 flex-col items-center md:flex">
+            <button
+              type="button"
+              onClick={() => setChannelsPanelCollapsed(false)}
+              title="Mở rộng danh sách kênh"
+              aria-label="Mở rộng danh sách kênh"
+              className="flex h-[58px] w-full shrink-0 items-center justify-center border-b border-black/25 text-2xl font-black text-gray-300 transition hover:bg-white/5 hover:text-white"
+            >
+              »
+            </button>
+
+            <div className="flex w-full flex-1 flex-col items-center gap-2 overflow-y-auto px-2 py-3">
+              {textChannels.map((channel) => {
+                const active = selectedChannelId === channel.id;
+                const unread = Number(channel.unread_count ?? 0);
+
+                return (
+                  <button
+                    key={channel.id}
+                    type="button"
+                    onClick={() => selectChannel(channel)}
+                    title={`# ${channel.name}`}
+                    aria-label={`Mở kênh văn bản ${channel.name}`}
+                    className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xl font-black transition ${
+                      active
+                        ? "bg-indigo-500 text-white"
+                        : "bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white"
+                    }`}
+                  >
+                    #
+                    {unread > 0 && !active && (
+                      <span className="absolute -right-1 -top-1 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] text-white">
+                        {unread > 9 ? "9+" : unread}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+
+              {textChannels.length > 0 &&
+                (voiceChannels.length > 0 ||
+                  gameChannels.length > 0) && (
+                  <span className="my-1 h-px w-8 shrink-0 bg-white/10" />
+                )}
+
+              {voiceChannels.map((channel) => {
+                const active = selectedChannelId === channel.id;
+                const participantCount =
+                  voiceParticipantsByChannel[channel.id]?.length ??
+                  0;
+
+                return (
+                  <button
+                    key={channel.id}
+                    type="button"
+                    onClick={() => selectChannel(channel)}
+                    title={`🔊 ${channel.name}`}
+                    aria-label={`Mở kênh thoại ${channel.name}`}
+                    className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-base transition ${
+                      active
+                        ? "bg-indigo-500 text-white"
+                        : "bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white"
+                    }`}
+                  >
+                    🔊
+                    {participantCount > 0 && (
+                      <span className="absolute -right-1 -top-1 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[9px] font-black text-white">
+                        {participantCount}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+
+              {voiceChannels.length > 0 &&
+                gameChannels.length > 0 && (
+                  <span className="my-1 h-px w-8 shrink-0 bg-white/10" />
+                )}
+
+              {gameChannels.map((channel) => {
+                const active = selectedChannelId === channel.id;
+                const playerCount = Number(
+                  gameSummaries[channel.id]?.player_count ?? 0,
+                );
+
+                return (
+                  <button
+                    key={channel.id}
+                    type="button"
+                    onClick={() => selectChannel(channel)}
+                    title={`🎮 ${channel.name}`}
+                    aria-label={`Mở kênh game ${channel.name}`}
+                    className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-base transition ${
+                      active
+                        ? "bg-indigo-500 text-white"
+                        : "bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white"
+                    }`}
+                  >
+                    🎮
+                    {playerCount > 0 && (
+                      <span className="absolute -right-1 -top-1 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[9px] font-black text-white">
+                        {playerCount}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div
+          className={`relative shrink-0 border-b border-black/25 ${
+            channelsPanelCollapsed ? "md:hidden" : ""
+          }`}
+        >
+          <div className="flex items-center">
           <button
             type="button"
             onClick={() => setShowServerMenu((open) => !open)}
-            className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-white/5"
+            className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3.5 text-left transition hover:bg-white/5"
           >
             {serverAvatar ? (
               <img
@@ -1211,6 +1342,19 @@ export default function ServerPage() {
               {showServerMenu ? "▲" : "▼"}
             </span>
           </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowServerMenu(false);
+                setChannelsPanelCollapsed(true);
+              }}
+              title="Thu gọn danh sách kênh"
+              aria-label="Thu gọn danh sách kênh"
+              className="mr-2 hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xl font-black text-gray-400 transition hover:bg-white/10 hover:text-white md:flex"
+            >
+              «
+            </button>
+          </div>
 
           {showServerMenu && (
             <div className="absolute inset-x-3 top-full z-40 mt-1 overflow-hidden rounded-2xl border border-white/10 bg-[#1e1f22] p-1.5 shadow-2xl">
@@ -1268,7 +1412,11 @@ export default function ServerPage() {
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-3">
+        <div
+          className={`flex-1 overflow-y-auto p-3 ${
+            channelsPanelCollapsed ? "md:hidden" : ""
+          }`}
+        >
           <div className="mb-2 flex items-center justify-between px-1">
             <span className="text-[11px] font-black uppercase tracking-wide text-gray-400">
               Kênh văn bản
@@ -1895,65 +2043,132 @@ export default function ServerPage() {
       </section>
 
       {/* Danh sách thành viên server */}
-      <aside className="hidden min-h-0 overflow-y-auto bg-[#2b2d31] p-4 lg:block">
-        <h2 className="text-xs font-black uppercase text-gray-400">
-          Thành viên — {members.length}
-        </h2>
-        {sortedMembers.map((member) => (
-          <div
-            key={member.id}
-            className={`mt-2 flex items-center gap-3 rounded-xl p-2 ${
-              onlineUserIds.has(member.id)
-                ? "text-gray-200"
-                : "text-gray-500 opacity-60"
-            }`}
-          >
-            <span className="relative shrink-0">
-              {member.avatar_url ? (
-                <img
-                  src={member.avatar_url}
-                  alt={member.username}
-                  className="h-9 w-9 rounded-full object-cover"
-                />
-              ) : (
-                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold">
-                  {member.username.charAt(0).toUpperCase()}
+      <aside className="hidden min-h-0 flex-col overflow-hidden bg-[#2b2d31] lg:flex">
+        {membersPanelCollapsed ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setMembersPanelCollapsed(false)}
+              title="Mở rộng danh sách thành viên"
+              aria-label="Mở rộng danh sách thành viên"
+              className="flex h-[58px] w-full shrink-0 items-center justify-center border-b border-black/25 text-2xl font-black text-gray-300 transition hover:bg-white/5 hover:text-white"
+            >
+              «
+            </button>
+            <div className="flex flex-1 flex-col items-center gap-2 overflow-y-auto px-2 py-3">
+              {sortedMembers.map((member) => (
+                <span
+                  key={member.id}
+                  title={`${member.username} · ${
+                    onlineUserIds.has(member.id)
+                      ? "Đang online"
+                      : "Đang offline"
+                  }`}
+                  className={`relative shrink-0 ${
+                    onlineUserIds.has(member.id)
+                      ? ""
+                      : "opacity-50"
+                  }`}
+                >
+                  {member.avatar_url ? (
+                    <img
+                      src={member.avatar_url}
+                      alt={member.username}
+                      className="h-10 w-10 rounded-full object-cover"
+                    />
+                  ) : (
+                    <span className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-500 font-bold">
+                      {member.username.charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                  <span
+                    className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] ${
+                      onlineUserIds.has(member.id)
+                        ? "bg-green-500"
+                        : "bg-gray-600"
+                    }`}
+                  />
                 </span>
-              )}
-              <span
-                className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] ${
-                  onlineUserIds.has(member.id)
-                    ? "bg-green-500"
-                    : "bg-gray-600"
-                }`}
-              />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-1.5">
-                <MemberBadge role={member.role} />
-                <span className="truncate text-sm font-semibold">
-                  {member.username}
-                </span>
-              </span>
-              <span className="block text-[10px] text-gray-500">
-                {formatPublicId(member.public_id)}
-                {member.server_role === "owner"
-                  ? " · 👑 Chủ server"
-                  : member.server_role === "moderator"
-                    ? " · 🛡️ Quản lý"
-                    : ""}
-              </span>
-              <span className="block truncate text-[10px] text-gray-500">
-                {onlineUserIds.has(member.id)
-                  ? "Đang online"
-                  : `Offline (${formatLastActive(
-                      member.last_seen_at,
-                      clock,
-                    )})`}
-              </span>
-            </span>
-          </div>
-        ))}
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex h-[58px] shrink-0 items-center justify-between border-b border-black/25 px-4">
+              <h2 className="text-xs font-black uppercase text-gray-400">
+                Thành viên — {members.length}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setMembersPanelCollapsed(true)}
+                title="Thu gọn danh sách thành viên"
+                aria-label="Thu gọn danh sách thành viên"
+                className="flex h-9 w-9 items-center justify-center rounded-xl text-xl font-black text-gray-400 transition hover:bg-white/10 hover:text-white"
+              >
+                »
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 pt-2">
+              {sortedMembers.map((member) => (
+                <div
+                  key={member.id}
+                  className={`mt-2 flex items-center gap-3 rounded-xl p-2 ${
+                    onlineUserIds.has(member.id)
+                      ? "text-gray-200"
+                      : "text-gray-500 opacity-60"
+                  }`}
+                >
+                  <span className="relative shrink-0">
+                    {member.avatar_url ? (
+                      <img
+                        src={member.avatar_url}
+                        alt={member.username}
+                        className="h-9 w-9 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold">
+                        {member.username
+                          .charAt(0)
+                          .toUpperCase()}
+                      </span>
+                    )}
+                    <span
+                      className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#2b2d31] ${
+                        onlineUserIds.has(member.id)
+                          ? "bg-green-500"
+                          : "bg-gray-600"
+                      }`}
+                    />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <MemberBadge role={member.role} />
+                      <span className="truncate text-sm font-semibold">
+                        {member.username}
+                      </span>
+                    </span>
+                    <span className="block text-[10px] text-gray-500">
+                      {formatPublicId(member.public_id)}
+                      {member.server_role === "owner"
+                        ? " · 👑 Chủ server"
+                        : member.server_role === "moderator"
+                          ? " · 🛡️ Quản lý"
+                          : ""}
+                    </span>
+                    <span className="block truncate text-[10px] text-gray-500">
+                      {onlineUserIds.has(member.id)
+                        ? "Đang online"
+                        : `Offline (${formatLastActive(
+                            member.last_seen_at,
+                            clock,
+                          )})`}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </aside>
 
       {/* Modal mã mời */}

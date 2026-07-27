@@ -309,7 +309,12 @@ begin
 end;
 $$;
 
-create or replace function public.get_game_channel_players(
+-- PostgreSQL không cho CREATE OR REPLACE thay đổi các cột của
+-- RETURNS TABLE. Xóa đúng chữ ký cũ để file có thể chạy lại sau
+-- khi một phiên bản trước đã tạo hàm này.
+drop function if exists public.get_game_channel_players(uuid);
+
+create function public.get_game_channel_players(
   p_channel_id uuid
 )
 returns table(

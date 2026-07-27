@@ -42,6 +42,27 @@ type GamePlayer = {
   role: "admin" | "moderator" | "member";
   is_ready: boolean;
   joined_at: string;
+  seat_index: number;
+};
+
+type GameSeatInvite = {
+  invite_id: number;
+  seat_index: number;
+  invitee_id: string;
+  username: string;
+  avatar_url: string | null;
+  public_id: number;
+  role: "admin" | "moderator" | "member";
+  inviter_username: string;
+  created_at: string;
+};
+
+type InvitableFriend = {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+  public_id: number;
+  role: "admin" | "moderator" | "member";
 };
 
 const GAME_BACKGROUNDS: Record<string, string> = {
@@ -87,6 +108,16 @@ export default function GameChannelRoom({
   const [summary, setSummary] =
     useState<GameChannelSummary | null>(null);
   const [players, setPlayers] = useState<GamePlayer[]>([]);
+  const [seatInvites, setSeatInvites] = useState<
+    GameSeatInvite[]
+  >([]);
+  const [invitableFriends, setInvitableFriends] = useState<
+    InvitableFriend[]
+  >([]);
+  const [selectedSeatIndex, setSelectedSeatIndex] =
+    useState<number | null>(null);
+  const [showFriendPicker, setShowFriendPicker] =
+    useState(false);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -96,6 +127,8 @@ export default function GameChannelRoom({
       { data: catalogRows, error: catalogError },
       { data: summaryRows, error: summaryError },
       { data: playerRows, error: playerError },
+      { data: inviteRows, error: inviteError },
+      { data: friendRows, error: friendError },
     ] = await Promise.all([
       supabase
         .from("game_catalog")
@@ -110,10 +143,20 @@ export default function GameChannelRoom({
       supabase.rpc("get_game_channel_players", {
         p_channel_id: channelId,
       }),
+      supabase.rpc("get_game_channel_invites", {
+        p_channel_id: channelId,
+      }),
+      supabase.rpc("get_invitable_game_friends", {
+        p_channel_id: channelId,
+      }),
     ]);
 
     const firstError =
-      catalogError || summaryError || playerError;
+      catalogError ||
+      summaryError ||
+      playerError ||
+      inviteError ||
+      friendError;
 
     if (firstError) {
       setErrorMessage(firstError.message);
@@ -138,6 +181,10 @@ export default function GameChannelRoom({
     setCatalog(nextCatalog);
     setSummary(nextSummary);
     setPlayers((playerRows ?? []) as GamePlayer[]);
+    setSeatInvites((inviteRows ?? []) as GameSeatInvite[]);
+    setInvitableFriends(
+      (friendRows ?? []) as InvitableFriend[],
+    );
     setLoading(false);
     setErrorMessage("");
     onSummaryChange?.(nextSummary);
@@ -167,6 +214,16 @@ export default function GameChannelRoom({
           event: "*",
           schema: "public",
           table: "game_channel_players",
+          filter: `channel_id=eq.${channelId}`,
+        },
+        () => void loadLobby(),
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "game_channel_invites",
           filter: `channel_id=eq.${channelId}`,
         },
         () => void loadLobby(),
@@ -246,7 +303,7 @@ export default function GameChannelRoom({
     setWorking(false);
   }
 
-  async function joinGame() {
+  async function joinGame(seatIndex?: number) {
     if (working || !selectedGame) return;
     setWorking(true);
     setErrorMessage("");
@@ -255,7 +312,93 @@ export default function GameChannelRoom({
       "join_game_channel",
       {
         p_channel_id: channelId,
+        p_seat_index: seatIndex ?? null,
       },
+    );
+
+    if (error) setErrorMessage(error.message);
+    else {
+      setSelectedSeatIndex(null);
+      await loadLobby();
+    }
+    setWorking(false);
+  }
+
+  async function moveToSeat(seatIndex: number) {
+    if (!currentPlayer || working) return;
+    setWorking(true);
+    setErrorMessage("");
+
+    const { error } = await supabase.rpc(
+      "move_game_channel_seat",
+      {
+        p_channel_id: channelId,
+        p_seat_index: seatIndex,
+      },
+    );
+
+    if (error) setErrorMessage(error.message);
+    else {
+      setSelectedSeatIndex(null);
+      await loadLobby();
+    }
+    setWorking(false);
+  }
+
+  async function inviteFriend(friendId: string) {
+    if (selectedSeatIndex === null || working) return;
+    setWorking(true);
+    setErrorMessage("");
+
+    const { error } = await supabase.rpc(
+      "invite_friend_to_game_channel",
+      {
+        p_channel_id: channelId,
+        p_friend_id: friendId,
+        p_seat_index: selectedSeatIndex,
+      },
+    );
+
+    if (error) setErrorMessage(error.message);
+    else {
+      setSelectedSeatIndex(null);
+      setShowFriendPicker(false);
+      await loadLobby();
+    }
+    setWorking(false);
+  }
+
+  async function respondToInvite(
+    inviteId: number,
+    accept: boolean,
+  ) {
+    if (working) return;
+    setWorking(true);
+    setErrorMessage("");
+
+    const { error } = await supabase.rpc(
+      "respond_game_channel_invite",
+      {
+        p_invite_id: inviteId,
+        p_accept: accept,
+      },
+    );
+
+    if (error) setErrorMessage(error.message);
+    else await loadLobby();
+    setWorking(false);
+  }
+
+  async function startGame() {
+    if (!currentPlayer || currentPlayer.seat_index !== 0 || working) {
+      return;
+    }
+
+    setWorking(true);
+    setErrorMessage("");
+    const { error } = await supabase.rpc(
+      "start_game_channel",
+      { p_channel_id: channelId },
     );
 
     if (error) setErrorMessage(error.message);
@@ -310,44 +453,55 @@ export default function GameChannelRoom({
     summary?.player_count ?? players.length,
   );
   const maximumPlayers = summary?.max_players ?? null;
+  const isRoomHost = currentPlayer?.seat_index === 0;
+  const canStartGame =
+    isRoomHost &&
+    players.length >= 2 &&
+    players.every((player) => player.is_ready) &&
+    summary?.status !== "playing";
 
   return (
     <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-4">
       <header className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-[#202225] p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-2xl">🎮</span>
+            <span className="text-2xl">
+              {summary?.game_icon ?? "🎮"}
+            </span>
             <h1 className="truncate text-xl font-black">
-              {channelName}
+              {summary?.game_name ?? channelName}
             </h1>
           </div>
           <p className="mt-1 text-sm text-gray-400">
-            {playerCount}/{maximumPlayers ?? "—"} người ·{" "}
-            {summary?.game_name ?? "Chưa chọn game"}
+            {channelName} · {playerCount}/
+            {maximumPlayers ?? "—"} người
           </p>
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {selectedGame && !currentPlayer && (
-            <button
-              type="button"
-              onClick={() => void joinGame()}
-              disabled={
-                working ||
-                (maximumPlayers !== null &&
-                  playerCount >= maximumPlayers)
-              }
-              className="rounded-xl bg-green-600 px-4 py-2.5 font-black hover:bg-green-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {maximumPlayers !== null &&
-              playerCount >= maximumPlayers
-                ? "Phòng đã đầy"
-                : "Tham gia chơi"}
-            </button>
-          )}
-
           {currentPlayer && (
             <>
+              {isRoomHost && (
+                <button
+                  type="button"
+                  onClick={() => void startGame()}
+                  disabled={working || !canStartGame}
+                  title={
+                    players.length < 2
+                      ? "Cần ít nhất 2 người"
+                      : !players.every(
+                            (player) => player.is_ready,
+                          )
+                        ? "Tất cả người chơi phải sẵn sàng"
+                        : "Bắt đầu trò chơi"
+                  }
+                  className="rounded-xl bg-amber-500 px-4 py-2.5 font-black text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  {summary?.status === "playing"
+                    ? "Đang chơi"
+                    : "▶ Bắt đầu trò chơi"}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => void toggleReady()}
@@ -594,12 +748,335 @@ export default function GameChannelRoom({
         </aside>
       </div>
 
+      {selectedGame && maximumPlayers !== null && (
+        <section className="rounded-2xl border border-white/10 bg-[#202225] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-black">
+                {selectedGame.icon} Phòng chờ{" "}
+                {selectedGame.name}
+              </h2>
+              <p className="mt-1 text-xs text-gray-400">
+                Ô số 1 là chủ phòng · Bấm dấu + để tham gia
+                hoặc mời bạn bè
+              </p>
+            </div>
+            <span className="rounded-full bg-green-500/15 px-3 py-1 text-xs font-black text-green-300">
+              {players.length}/{maximumPlayers} người
+            </span>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
+            {Array.from(
+              { length: maximumPlayers },
+              (_, seatIndex) => {
+                const player = players.find(
+                  (item) => item.seat_index === seatIndex,
+                );
+                const invite = seatInvites.find(
+                  (item) => item.seat_index === seatIndex,
+                );
+
+                if (player) {
+                  return (
+                    <div
+                      key={seatIndex}
+                      className={`relative flex min-h-32 flex-col items-center justify-center rounded-2xl border p-3 text-center ${
+                        seatIndex === 0
+                          ? "border-amber-400/70 bg-amber-500/10"
+                          : "border-white/10 bg-[#2b2d31]"
+                      }`}
+                    >
+                      {seatIndex === 0 && (
+                        <span
+                          title="Chủ phòng"
+                          className="absolute left-2 top-2 text-lg"
+                        >
+                          👑
+                        </span>
+                      )}
+                      <span className="absolute right-2 top-2 text-[10px] font-black text-gray-500">
+                        {seatIndex + 1}
+                      </span>
+
+                      {player.avatar_url ? (
+                        <img
+                          src={player.avatar_url}
+                          alt={player.username}
+                          className="h-12 w-12 rounded-full object-cover ring-2 ring-white/10"
+                        />
+                      ) : (
+                        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-500 text-lg font-black">
+                          {player.username
+                            .charAt(0)
+                            .toUpperCase()}
+                        </span>
+                      )}
+
+                      <span className="mt-2 max-w-full truncate text-xs font-black">
+                        {player.username}
+                      </span>
+                      <span
+                        className={`mt-1 text-[10px] font-bold ${
+                          player.is_ready
+                            ? "text-green-300"
+                            : "text-gray-500"
+                        }`}
+                      >
+                        {seatIndex === 0
+                          ? player.is_ready
+                            ? "Chủ phòng · Sẵn sàng"
+                            : "Chủ phòng · Chưa sẵn sàng"
+                          : player.is_ready
+                            ? "Đã sẵn sàng"
+                            : "Chưa sẵn sàng"}
+                      </span>
+                    </div>
+                  );
+                }
+
+                if (invite) {
+                  const isMyInvite =
+                    invite.invitee_id === currentUserId;
+
+                  return (
+                    <div
+                      key={seatIndex}
+                      className="relative flex min-h-32 flex-col items-center justify-center rounded-2xl border border-dashed border-indigo-400/50 bg-indigo-500/10 p-3 text-center"
+                    >
+                      <span className="absolute right-2 top-2 text-[10px] font-black text-gray-500">
+                        {seatIndex + 1}
+                      </span>
+                      {invite.avatar_url ? (
+                        <img
+                          src={invite.avatar_url}
+                          alt={invite.username}
+                          className="h-10 w-10 rounded-full object-cover opacity-70"
+                        />
+                      ) : (
+                        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-500/60 text-sm font-black">
+                          {invite.username
+                            .charAt(0)
+                            .toUpperCase()}
+                        </span>
+                      )}
+                      <span className="mt-2 max-w-full truncate text-[11px] font-bold text-indigo-200">
+                        {invite.username}
+                      </span>
+                      <span className="mt-1 text-[9px] text-gray-400">
+                        Đã được mời
+                      </span>
+
+                      {isMyInvite && (
+                        <span className="mt-2 flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void respondToInvite(
+                                invite.invite_id,
+                                true,
+                              )
+                            }
+                            disabled={working}
+                            className="rounded-lg bg-green-600 px-2 py-1 text-[9px] font-black hover:bg-green-500"
+                          >
+                            Vào
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void respondToInvite(
+                                invite.invite_id,
+                                false,
+                              )
+                            }
+                            disabled={working}
+                            className="rounded-lg bg-white/10 px-2 py-1 text-[9px] font-black hover:bg-white/15"
+                          >
+                            Từ chối
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
+
+                return (
+                  <button
+                    key={seatIndex}
+                    type="button"
+                    onClick={() => {
+                      setSelectedSeatIndex(seatIndex);
+                      setShowFriendPicker(false);
+                      setErrorMessage("");
+                    }}
+                    disabled={working}
+                    title={`Ô chờ ${seatIndex + 1}`}
+                    className="group relative flex min-h-32 flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 bg-[#2b2d31]/60 p-3 transition hover:border-indigo-400 hover:bg-indigo-500/10 disabled:opacity-50"
+                  >
+                    <span className="absolute right-2 top-2 text-[10px] font-black text-gray-600">
+                      {seatIndex + 1}
+                    </span>
+                    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/5 text-3xl text-gray-500 transition group-hover:bg-indigo-500 group-hover:text-white">
+                      +
+                    </span>
+                    <span className="mt-2 text-[10px] font-bold text-gray-500 group-hover:text-indigo-200">
+                      Ô trống
+                    </span>
+                  </button>
+                );
+              },
+            )}
+          </div>
+        </section>
+      )}
+
       <ChannelVoiceRoom
         channelId={channelId}
         channelName={`${channelName} · Trò chuyện khi chơi`}
         voiceOnly
         compact
       />
+
+      {selectedSeatIndex !== null && (
+        <div className="fixed inset-0 z-[280] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <button
+            type="button"
+            aria-label="Đóng lựa chọn ô chờ"
+            onClick={() => {
+              setSelectedSeatIndex(null);
+              setShowFriendPicker(false);
+            }}
+            className="absolute inset-0"
+          />
+
+          <section
+            role="dialog"
+            aria-modal="true"
+            className="relative z-10 w-full max-w-md rounded-3xl border border-white/10 bg-[#202225] p-5 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-black">
+                  Ô chờ số {selectedSeatIndex + 1}
+                </h2>
+                <p className="mt-1 text-sm text-gray-400">
+                  {showFriendPicker
+                    ? "Chọn một người bạn đang ở trong server."
+                    : "Bạn muốn làm gì với ô chờ này?"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedSeatIndex(null);
+                  setShowFriendPicker(false);
+                }}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-2xl"
+              >
+                ×
+              </button>
+            </div>
+
+            {showFriendPicker ? (
+              <div className="mt-5 max-h-80 space-y-2 overflow-y-auto">
+                {invitableFriends.length === 0 ? (
+                  <p className="rounded-xl bg-[#2b2d31] px-4 py-6 text-center text-sm text-gray-400">
+                    Không có bạn bè phù hợp để mời. Người được
+                    mời phải là thành viên của server và chưa ở
+                    trong phòng chờ.
+                  </p>
+                ) : (
+                  invitableFriends.map((friend) => (
+                    <button
+                      key={friend.id}
+                      type="button"
+                      onClick={() =>
+                        void inviteFriend(friend.id)
+                      }
+                      disabled={working}
+                      className="flex w-full items-center gap-3 rounded-xl bg-[#2b2d31] p-3 text-left hover:bg-[#35373c] disabled:opacity-50"
+                    >
+                      {friend.avatar_url ? (
+                        <img
+                          src={friend.avatar_url}
+                          alt={friend.username}
+                          className="h-10 w-10 rounded-full object-cover"
+                        />
+                      ) : (
+                        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-500 font-black">
+                          {friend.username
+                            .charAt(0)
+                            .toUpperCase()}
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-2">
+                          <MemberBadge role={friend.role} />
+                          <span className="truncate text-sm font-bold">
+                            {friend.username}
+                          </span>
+                        </span>
+                        <span className="text-[10px] text-gray-500">
+                          {formatPublicId(friend.public_id)}
+                        </span>
+                      </span>
+                      <span className="text-indigo-300">Mời</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : (
+              <div className="mt-5 space-y-3">
+                {!currentPlayer && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void joinGame(selectedSeatIndex)
+                    }
+                    disabled={working}
+                    className="w-full rounded-xl bg-green-600 px-4 py-3 font-black hover:bg-green-500 disabled:opacity-50"
+                  >
+                    🎮 Tham gia tại ô này
+                  </button>
+                )}
+
+                {currentPlayer &&
+                  currentPlayer.seat_index !==
+                    selectedSeatIndex &&
+                  currentPlayer.seat_index !== 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void moveToSeat(selectedSeatIndex)
+                      }
+                      disabled={working}
+                      className="w-full rounded-xl bg-indigo-500 px-4 py-3 font-black hover:bg-indigo-400 disabled:opacity-50"
+                    >
+                      ↔ Chuyển sang vị trí này
+                    </button>
+                  )}
+
+                {currentPlayer?.seat_index === 0 && (
+                  <p className="rounded-xl bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+                    Chủ phòng phải ở ô số 1 nên không thể chuyển
+                    vị trí.
+                  </p>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowFriendPicker(true)}
+                  disabled={working}
+                  className="w-full rounded-xl bg-white/10 px-4 py-3 font-black hover:bg-white/15 disabled:opacity-50"
+                >
+                  📨 Mời bạn bè vào ô này
+                </button>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
