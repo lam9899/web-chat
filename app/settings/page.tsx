@@ -31,18 +31,28 @@ function safeFileName(fileName: string) {
     .toLowerCase();
 }
 
+function formatPublicId(publicId: number | null) {
+  if (publicId === null) return "#------";
+  return `#${Math.max(0, publicId).toString().padStart(6, "0")}`;
+}
+
 export default function SettingsPage() {
   const [userId, setUserId] = useState("");
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
+  const [publicId, setPublicId] = useState<number | null>(null);
   const [avatarUrl, setAvatarUrl] = useState("");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreviewUrl, setAvatarPreviewUrl] =
     useState("");
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
+  const [showPasswordModal, setShowPasswordModal] =
+    useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -101,15 +111,26 @@ export default function SettingsPage() {
       );
       setAvatarUrl(user.user_metadata?.avatar_url || "");
 
-      const { data: roleData } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", user.id)
-        .maybeSingle();
+      const [
+        { data: roleData },
+        { data: profileData },
+      ] = await Promise.all([
+        supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", user.id)
+          .maybeSingle(),
+        supabase
+          .from("profiles")
+          .select("public_id")
+          .eq("id", user.id)
+          .maybeSingle(),
+      ]);
 
       if (!active) return;
 
       setIsAdmin(roleData?.role === "admin");
+      setPublicId(profileData?.public_id ?? null);
       setLoading(false);
     }
 
@@ -240,33 +261,85 @@ export default function SettingsPage() {
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    if (!currentPassword) {
+      setPasswordError("Vui lòng nhập mật khẩu hiện tại.");
+      return;
+    }
+
     if (newPassword.length < 8) {
-      setErrorMessage("Mật khẩu mới phải có ít nhất 8 ký tự.");
+      setPasswordError("Mật khẩu mới phải có ít nhất 8 ký tự.");
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setErrorMessage("Hai mật khẩu chưa khớp.");
+      setPasswordError("Hai mật khẩu mới chưa khớp.");
+      return;
+    }
+
+    if (currentPassword === newPassword) {
+      setPasswordError(
+        "Mật khẩu mới phải khác mật khẩu hiện tại.",
+      );
       return;
     }
 
     setSavingPassword(true);
     setNotice("");
-    setErrorMessage("");
+    setPasswordError("");
 
-    const { error } = await supabase.auth.updateUser({
-      password: newPassword,
-    });
+    try {
+      const { error: verifyError } =
+        await supabase.auth.signInWithPassword({
+          email,
+          password: currentPassword,
+        });
 
-    if (error) {
-      setErrorMessage(`Không thể đổi mật khẩu: ${error.message}`);
-    } else {
+      if (verifyError) {
+        setPasswordError("Mật khẩu hiện tại không đúng.");
+        return;
+      }
+
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+      setShowPasswordModal(false);
       setNotice("Đã đổi mật khẩu thành công.");
+    } catch (error) {
+      setPasswordError(
+        `Không thể đổi mật khẩu: ${
+          error instanceof Error ? error.message : "Lỗi không xác định"
+        }`,
+      );
+    } finally {
+      setSavingPassword(false);
     }
+  }
 
-    setSavingPassword(false);
+  function openPasswordModal() {
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setPasswordError("");
+    setNotice("");
+    setErrorMessage("");
+    setShowPasswordModal(true);
+  }
+
+  function closePasswordModal() {
+    if (savingPassword) return;
+    setShowPasswordModal(false);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setPasswordError("");
   }
 
   async function enableBrowserNotifications() {
@@ -427,6 +500,12 @@ export default function SettingsPage() {
                   title="Bấm để sửa tên hiển thị"
                   className="w-full rounded-md border border-transparent bg-transparent px-2 py-1 text-lg font-bold outline-none transition hover:border-white/10 hover:bg-[#1e1f22] focus:border-indigo-400 focus:bg-[#1e1f22]"
                 />
+                <p
+                  title="ID tài khoản được hệ thống cấp và không thể thay đổi"
+                  className="mt-0.5 truncate px-2 text-sm font-semibold text-indigo-300"
+                >
+                  🔒 ID {formatPublicId(publicId)}
+                </p>
                 <p className="truncate px-2 text-sm text-gray-400">
                   {email}
                 </p>
@@ -559,61 +638,21 @@ export default function SettingsPage() {
         </section>
 
         <section className="mb-6 rounded-xl bg-[#313338] p-6 shadow-xl">
-          <h2 className="mb-5 text-xl font-bold">Đổi mật khẩu</h2>
-
-          <form onSubmit={changePassword} className="space-y-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <label
-                htmlFor="new-password"
-                className="mb-2 block text-xs font-bold uppercase text-gray-300"
-              >
-                Mật khẩu mới
-              </label>
-
-              <input
-                id="new-password"
-                type="password"
-                value={newPassword}
-                onChange={(event) => setNewPassword(event.target.value)}
-                minLength={8}
-                autoComplete="new-password"
-                required
-                className="w-full rounded-md bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
-              />
+              <h2 className="text-xl font-bold">Mật khẩu</h2>
+              <p className="mt-2 text-sm text-gray-400">
+                Xác minh mật khẩu hiện tại trước khi đặt mật khẩu mới.
+              </p>
             </div>
-
-            <div>
-              <label
-                htmlFor="confirm-password"
-                className="mb-2 block text-xs font-bold uppercase text-gray-300"
-              >
-                Nhập lại mật khẩu
-              </label>
-
-              <input
-                id="confirm-password"
-                type="password"
-                value={confirmPassword}
-                onChange={(event) =>
-                  setConfirmPassword(event.target.value)
-                }
-                minLength={8}
-                autoComplete="new-password"
-                required
-                className="w-full rounded-md bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
-              />
-            </div>
-
             <button
-              type="submit"
-              disabled={savingPassword}
-              className="rounded-md bg-indigo-500 px-5 py-3 font-semibold hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+              type="button"
+              onClick={openPasswordModal}
+              className="shrink-0 rounded-md bg-indigo-500 px-5 py-3 font-semibold hover:bg-indigo-400"
             >
-              {savingPassword
-                ? "Đang đổi mật khẩu..."
-                : "Đổi mật khẩu"}
+              Đổi mật khẩu
             </button>
-          </form>
+          </div>
         </section>
 
 
@@ -659,6 +698,139 @@ export default function SettingsPage() {
           </button>
         </section>
       </div>
+
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <button
+            type="button"
+            aria-label="Đóng cửa sổ đổi mật khẩu"
+            onClick={closePasswordModal}
+            className="absolute inset-0"
+          />
+
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="change-password-title"
+            className="relative z-10 w-full max-w-md rounded-2xl bg-[#313338] p-6 shadow-2xl"
+          >
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h2
+                  id="change-password-title"
+                  className="text-2xl font-bold"
+                >
+                  Đổi mật khẩu
+                </h2>
+                <p className="mt-1 text-sm text-gray-400">
+                  Nhập đủ ba ô để bảo vệ tài khoản.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closePasswordModal}
+                disabled={savingPassword}
+                aria-label="Đóng"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-2xl hover:bg-white/15 disabled:opacity-50"
+              >
+                ×
+              </button>
+            </div>
+
+            {passwordError && (
+              <div className="mb-4 rounded-md bg-red-500/15 px-4 py-3 text-sm text-red-300">
+                {passwordError}
+              </div>
+            )}
+
+            <form onSubmit={changePassword} className="space-y-4">
+              <div>
+                <label
+                  htmlFor="current-password"
+                  className="mb-2 block text-xs font-bold uppercase text-gray-300"
+                >
+                  Mật khẩu hiện tại
+                </label>
+                <input
+                  id="current-password"
+                  type="password"
+                  value={currentPassword}
+                  onChange={(event) =>
+                    setCurrentPassword(event.target.value)
+                  }
+                  autoComplete="current-password"
+                  autoFocus
+                  required
+                  className="w-full rounded-md bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="new-password"
+                  className="mb-2 block text-xs font-bold uppercase text-gray-300"
+                >
+                  Mật khẩu mới
+                </label>
+                <input
+                  id="new-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(event) =>
+                    setNewPassword(event.target.value)
+                  }
+                  minLength={8}
+                  autoComplete="new-password"
+                  required
+                  className="w-full rounded-md bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="confirm-password"
+                  className="mb-2 block text-xs font-bold uppercase text-gray-300"
+                >
+                  Nhập lại mật khẩu mới
+                </label>
+                <input
+                  id="confirm-password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(event) =>
+                    setConfirmPassword(event.target.value)
+                  }
+                  minLength={8}
+                  autoComplete="new-password"
+                  required
+                  className="w-full rounded-md bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={closePasswordModal}
+                  disabled={savingPassword}
+                  className="rounded-md bg-white/10 px-4 py-2.5 font-semibold hover:bg-white/15 disabled:opacity-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingPassword}
+                  className="rounded-md bg-indigo-500 px-5 py-2.5 font-semibold hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingPassword
+                    ? "Đang đổi..."
+                    : "Xác nhận đổi mật khẩu"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
