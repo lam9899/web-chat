@@ -1,3 +1,5 @@
+import "server-only";
+
 import { createClient } from "@supabase/supabase-js";
 import { AccessToken } from "livekit-server-sdk";
 import { NextRequest, NextResponse } from "next/server";
@@ -139,7 +141,7 @@ export async function POST(request: NextRequest) {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("username")
+      .select("username, avatar_url")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -154,6 +156,9 @@ export async function POST(request: NextRequest) {
           profile?.username ??
           user.email?.split("@")[0] ??
           "Thành viên",
+        metadata: JSON.stringify({
+          avatar_url: profile?.avatar_url ?? "",
+        }),
         ttl: "2h",
       },
     );

@@ -15,6 +15,43 @@ export type DynamicChannel = {
   member_count: number;
   unread_count: number;
   can_manage: boolean;
+  server_id: string | null;
+};
+
+export type ServerSummary = {
+  id: string;
+  name: string;
+  description: string;
+  avatar_path: string | null;
+  owner_id: string;
+  invite_code: string;
+  max_members: number;
+  created_at: string;
+  member_role: "owner" | "moderator" | "member";
+  member_ids: string[];
+  member_count: number;
+  can_manage: boolean;
+};
+
+export type ServerMember = {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+  public_id: number;
+  role: "admin" | "moderator" | "member";
+  server_role: "owner" | "moderator" | "member";
+  joined_at: string;
+  last_seen_at: string | null;
+};
+
+export type ServerInvitePreview = {
+  id: string;
+  name: string;
+  description: string;
+  avatar_path: string | null;
+  member_count: number;
+  max_members: number;
+  already_member: boolean;
 };
 
 export type ChannelMember = {
@@ -52,8 +89,18 @@ export type ChannelMessage = {
   edited_at: string | null;
 };
 
+type AvatarStorageClient = {
+  storage: {
+    from: (bucket: string) => {
+      getPublicUrl: (path: string) => {
+        data: { publicUrl: string };
+      };
+    };
+  };
+};
+
 export function channelAvatarUrl(
-  supabase: any,
+  supabase: AvatarStorageClient,
   avatarPath: string | null | undefined,
 ) {
   if (!avatarPath) return "";

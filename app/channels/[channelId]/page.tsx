@@ -89,13 +89,22 @@ export default function DynamicChannelPage() {
     }
 
     const loaded = data[0] as DynamicChannel;
+
+    // Kênh thuộc server thì mở trong giao diện server.
+    if (loaded.server_id) {
+      router.replace(
+        `/servers/${loaded.server_id}?channel=${loaded.id}`,
+      );
+      return;
+    }
+
     setChannel(loaded);
     setEditName(loaded.name);
     setEditDescription(loaded.description);
     setEditType(loaded.channel_type);
     setEditVisibility(loaded.visibility);
     setEditLocked(loaded.is_locked);
-  }, [channelId]);
+  }, [channelId, router]);
 
   const loadMembers = useCallback(async () => {
     const { data, error } = await supabase.rpc(

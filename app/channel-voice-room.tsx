@@ -23,10 +23,22 @@ type ConnectionDetails = {
   channel_name: string;
 };
 
+export type VoiceParticipantSnapshot = {
+  user_id: string;
+  username: string;
+  avatar_url: string;
+  is_speaking: boolean;
+  is_muted: boolean;
+};
+
 type Props = {
   channelId: string;
   channelName: string;
   voiceOnly?: boolean;
+  onParticipantsChange?: (
+    channelId: string,
+    participants: VoiceParticipantSnapshot[],
+  ) => void;
 };
 
 function getAvatar(participant: Participant) {
@@ -100,7 +112,17 @@ function VoiceMember({ participant, last }: { participant: Participant; last: bo
   );
 }
 
-function VoiceStage({ channelName, onLeave }: { channelName: string; onLeave: () => void }) {
+function VoiceStage({
+  channelId,
+  channelName,
+  onLeave,
+  onParticipantsChange,
+}: {
+  channelId: string;
+  channelName: string;
+  onLeave: () => void;
+  onParticipantsChange?: Props["onParticipantsChange"];
+}) {
   const participants = useParticipants();
   const [expanded, setExpanded] = useState(true);
   const [speakerMuted, setSpeakerMuted] = useState(false);
@@ -118,6 +140,30 @@ function VoiceStage({ channelName, onLeave }: { channelName: string; onLeave: ()
       }),
     [participants],
   );
+
+  const participantSnapshots = useMemo(
+    () =>
+      ordered.map((participant) => ({
+        user_id: participant.identity,
+        username:
+          participant.name || participant.identity,
+        avatar_url: getAvatar(participant),
+        is_speaking: participant.isSpeaking,
+        is_muted: !participant.isMicrophoneEnabled,
+      })),
+    [ordered],
+  );
+
+  useEffect(() => {
+    onParticipantsChange?.(
+      channelId,
+      participantSnapshots,
+    );
+  }, [
+    channelId,
+    onParticipantsChange,
+    participantSnapshots,
+  ]);
 
   useEffect(() => {
     if (!showDevices) return;
@@ -226,7 +272,11 @@ function VoiceStage({ channelName, onLeave }: { channelName: string; onLeave: ()
   );
 }
 
-export default function ChannelVoiceRoom({ channelId, channelName }: Props) {
+export default function ChannelVoiceRoom({
+  channelId,
+  channelName,
+  onParticipantsChange,
+}: Props) {
   const [connection, setConnection] = useState<ConnectionDetails | null>(null);
   const [joining, setJoining] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -293,7 +343,12 @@ export default function ChannelVoiceRoom({ channelId, channelName }: Props) {
       onError={(error) => setErrorMessage(error.message)}
       data-lk-theme="default"
     >
-      <VoiceStage channelName={channelName} onLeave={() => setConnection(null)} />
+      <VoiceStage
+        channelId={channelId}
+        channelName={channelName}
+        onLeave={() => setConnection(null)}
+        onParticipantsChange={onParticipantsChange}
+      />
     </LiveKitRoom>
   );
 }
