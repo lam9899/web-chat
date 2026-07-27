@@ -1,6 +1,12 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useState } from "react";
+import {
+  ChangeEvent,
+  FormEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createClient } from "@/utils/supabase/client";
 import InstallAppButton from "../install-app-button";
 import {
@@ -31,6 +37,9 @@ export default function SettingsPage() {
   const [username, setUsername] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreviewUrl, setAvatarPreviewUrl] =
+    useState("");
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -111,6 +120,14 @@ export default function SettingsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (avatarPreviewUrl) {
+        URL.revokeObjectURL(avatarPreviewUrl);
+      }
+    };
+  }, [avatarPreviewUrl]);
+
   function chooseAvatar(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
 
@@ -128,7 +145,12 @@ export default function SettingsPage() {
       return;
     }
 
+    if (avatarPreviewUrl) {
+      URL.revokeObjectURL(avatarPreviewUrl);
+    }
+
     setAvatarFile(file);
+    setAvatarPreviewUrl(URL.createObjectURL(file));
     setErrorMessage("");
   }
 
@@ -184,9 +206,25 @@ export default function SettingsPage() {
         throw new Error(error.message);
       }
 
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({
+          username: cleanUsername,
+          avatar_url: nextAvatarUrl || null,
+        })
+        .eq("id", userId);
+
+      if (profileError) {
+        throw new Error(profileError.message);
+      }
+
       setUsername(cleanUsername);
       setAvatarUrl(nextAvatarUrl);
       setAvatarFile(null);
+      setAvatarPreviewUrl("");
+      if (avatarInputRef.current) {
+        avatarInputRef.current.value = "";
+      }
       setNotice("Đã lưu hồ sơ.");
     } catch (error) {
       setErrorMessage(
@@ -339,62 +377,63 @@ export default function SettingsPage() {
 
           <form onSubmit={saveProfile} className="space-y-5">
             <div className="flex items-center gap-4">
-              {avatarUrl ? (
-                <img
-                  src={avatarUrl}
-                  alt={username}
-                  className="h-20 w-20 rounded-full object-cover"
-                />
-              ) : (
-                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-indigo-500 text-3xl font-bold">
-                  {username.charAt(0).toUpperCase()}
-                </div>
-              )}
-
-              <div className="min-w-0">
-                <p className="truncate font-semibold">{username}</p>
-                <p className="truncate text-sm text-gray-400">{email}</p>
-              </div>
-            </div>
-
-            <div>
-              <label
-                htmlFor="username"
-                className="mb-2 block text-xs font-bold uppercase text-gray-300"
-              >
-                Tên hiển thị
-              </label>
-
               <input
-                id="username"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                minLength={2}
-                maxLength={30}
-                required
-                className="w-full rounded-md bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="avatar"
-                className="mb-2 block text-xs font-bold uppercase text-gray-300"
-              >
-                Ảnh đại diện mới
-              </label>
-
-              <input
+                ref={avatarInputRef}
                 id="avatar"
                 type="file"
                 accept="image/*"
                 onChange={chooseAvatar}
-                className="block w-full rounded-md bg-[#1e1f22] px-4 py-3 text-sm text-gray-300"
+                className="hidden"
               />
 
-              <p className="mt-2 text-xs text-gray-500">
-                Chỉ dùng file ảnh, tối đa 5 MB.
-              </p>
+              <button
+                type="button"
+                onClick={() => avatarInputRef.current?.click()}
+                title="Bấm để đổi ảnh đại diện"
+                aria-label="Đổi ảnh đại diện"
+                className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-full outline-none ring-indigo-400 focus-visible:ring-4"
+              >
+                {avatarPreviewUrl || avatarUrl ? (
+                  <img
+                    src={avatarPreviewUrl || avatarUrl}
+                    alt={username}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span className="flex h-full w-full items-center justify-center bg-indigo-500 text-3xl font-bold">
+                    {username.charAt(0).toUpperCase()}
+                  </span>
+                )}
+
+                <span className="absolute inset-x-0 bottom-0 bg-black/70 py-1.5 text-[11px] font-bold text-white opacity-90 transition group-hover:opacity-100">
+                  Đổi ảnh
+                </span>
+              </button>
+
+              <div className="min-w-0 flex-1">
+                <label
+                  htmlFor="username"
+                  className="mb-1 block text-xs font-bold uppercase text-gray-400"
+                >
+                  Tên hiển thị
+                </label>
+                <input
+                  id="username"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  minLength={2}
+                  maxLength={30}
+                  required
+                  title="Bấm để sửa tên hiển thị"
+                  className="w-full rounded-md border border-transparent bg-transparent px-2 py-1 text-lg font-bold outline-none transition hover:border-white/10 hover:bg-[#1e1f22] focus:border-indigo-400 focus:bg-[#1e1f22]"
+                />
+                <p className="truncate px-2 text-sm text-gray-400">
+                  {email}
+                </p>
+                <p className="mt-1 px-2 text-xs text-gray-500">
+                  Bấm vào avatar hoặc tên để sửa.
+                </p>
+              </div>
             </div>
 
             <button

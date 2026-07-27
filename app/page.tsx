@@ -507,11 +507,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
 
   const [username, setUsername] = useState("Bạn");
-  const [avatarUrl, setAvatarUrl] = useState("");
   const [userId, setUserId] = useState("");
-  const [publicId, setPublicId] = useState<number | null>(null);
-  const [memberRole, setMemberRole] =
-    useState<MemberRole>("member");
   const [memberCards, setMemberCards] = useState<
     Record<string, MemberCard>
   >({});
@@ -1126,9 +1122,6 @@ export default function Home() {
       setBlockedUserIds(blockedIdSet);
       setUserId(authenticatedUserId);
       setUsername(displayName);
-      setAvatarUrl(currentAvatar);
-      setPublicId(currentPublicId);
-      setMemberRole(currentRole);
 
       async function refreshPrivateUnreadCount() {
         const { count, error: countError } = await supabase
@@ -2719,11 +2712,6 @@ export default function Home() {
     }
   }
 
-  async function logout() {
-    await supabase.auth.signOut();
-    window.location.href = "/login";
-  }
-
   function suspensionEndText() {
     if (!suspension?.suspended_until) {
       return "vĩnh viễn";
@@ -3004,45 +2992,6 @@ export default function Home() {
           )}
         </div>
 
-        <div className="flex items-center gap-3 bg-[#232428] p-3">
-          {avatarUrl ? (
-            <img
-              src={avatarUrl}
-              alt={username}
-              className="h-9 w-9 rounded-full object-cover"
-            />
-          ) : (
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 font-bold">
-              {username.charAt(0).toUpperCase()}
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              window.location.href = "/settings";
-            }}
-            className="min-w-0 flex-1 text-left"
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <MemberBadge role={memberRole} />
-              <div className="truncate text-sm font-semibold">
-                {username}
-              </div>
-            </div>
-            <div className="truncate text-xs text-gray-400">
-              {formatPublicId(publicId)} · Cài đặt tài khoản
-            </div>
-          </button>
-
-          <button
-            onClick={logout}
-            title="Đăng xuất"
-            className="text-gray-400 hover:text-white"
-          >
-            ↪
-          </button>
-        </div>
       </aside>
 
       {/* Chat */}

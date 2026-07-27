@@ -53,6 +53,10 @@ export default function ChannelRail({
     new Set(),
   );
   const [currentUserId, setCurrentUserId] = useState("");
+  const [accountUsername, setAccountUsername] =
+    useState("Tài khoản");
+  const [accountAvatarUrl, setAccountAvatarUrl] =
+    useState("");
   const [currentRole, setCurrentRole] =
     useState<"admin" | "moderator" | "member">("member");
 
@@ -126,6 +130,14 @@ export default function ChannelRail({
 
       if (!user || !active) return;
       setCurrentUserId(user.id);
+      setAccountUsername(
+        user.user_metadata?.username ||
+          user.email?.split("@")[0] ||
+          "Tài khoản",
+      );
+      setAccountAvatarUrl(
+        user.user_metadata?.avatar_url || "",
+      );
 
       const [{ data: roleRow }, { data: friendRows }] =
         await Promise.all([
@@ -746,6 +758,42 @@ export default function ChannelRail({
               {invites.length > 99 ? "99+" : invites.length}
             </span>
           )}
+        </button>
+
+        <div className="mt-auto h-px w-9 shrink-0 bg-white/10" />
+
+        <button
+          type="button"
+          onClick={() => {
+            setShowMobileRail(false);
+            router.push("/settings");
+          }}
+          title="Tài khoản"
+          aria-label="Tài khoản"
+          className="group flex w-full shrink-0 flex-col items-center gap-1 text-gray-300 transition hover:text-white"
+        >
+          <span
+            className={`relative flex h-[52px] w-[52px] items-center justify-center overflow-hidden rounded-2xl border-2 bg-[#313338] transition group-hover:rounded-xl ${
+              pathname === "/settings"
+                ? "border-indigo-400"
+                : "border-transparent group-hover:border-indigo-400/60"
+            }`}
+          >
+            {accountAvatarUrl ? (
+              <img
+                src={accountAvatarUrl}
+                alt={accountUsername}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center bg-indigo-500 text-xl font-black text-white">
+                {accountUsername.charAt(0).toUpperCase()}
+              </span>
+            )}
+          </span>
+          <span className="text-[10px] font-bold leading-none">
+            Tài khoản
+          </span>
         </button>
       </aside>
 
