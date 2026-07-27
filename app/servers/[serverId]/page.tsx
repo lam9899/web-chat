@@ -87,6 +87,8 @@ export default function ServerPage() {
   >(null);
   const [voiceJoinRequestId, setVoiceJoinRequestId] =
     useState(0);
+  const [activeVoiceChannelId, setActiveVoiceChannelId] =
+    useState<string | null>(null);
 
   const [messageInput, setMessageInput] = useState("");
   const [loading, setLoading] = useState(true);
@@ -399,6 +401,24 @@ export default function ServerPage() {
     [channels, selectedChannelId],
   );
 
+  const activeVoiceChannel = useMemo(
+    () =>
+      voiceChannels.find(
+        (channel) => channel.id === activeVoiceChannelId,
+      ) ?? null,
+    [activeVoiceChannelId, voiceChannels],
+  );
+
+  const handleVoiceLeave = useCallback((channelId: string) => {
+    setActiveVoiceChannelId((current) =>
+      current === channelId ? null : current,
+    );
+    setVoiceParticipantsByChannel((current) => ({
+      ...current,
+      [channelId]: [],
+    }));
+  }, []);
+
   // Chọn kênh mặc định (theo ?channel= hoặc kênh văn bản đầu tiên).
   useEffect(() => {
     if (loading || channels.length === 0) return;
@@ -567,6 +587,7 @@ export default function ServerPage() {
   function selectChannel(channel: DynamicChannel) {
     setSelectedChannelId(channel.id);
     if (channel.channel_type === "voice") {
+      setActiveVoiceChannelId(channel.id);
       setVoiceJoinRequestId((current) => current + 1);
     }
     setShowSidebar(false);
@@ -1354,6 +1375,20 @@ export default function ServerPage() {
             </p>
           )}
 
+          {activeVoiceChannel && (
+            <ChannelVoiceRoom
+              key={activeVoiceChannel.id}
+              channelId={activeVoiceChannel.id}
+              channelName={activeVoiceChannel.name}
+              voiceOnly
+              joinRequestId={voiceJoinRequestId}
+              onParticipantsChange={
+                handleVoiceParticipantsChange
+              }
+              onLeave={handleVoiceLeave}
+            />
+          )}
+
           {!selectedChannel ? (
             <div className="flex h-full items-center justify-center text-center text-gray-400">
               <div>
@@ -1367,16 +1402,19 @@ export default function ServerPage() {
               </div>
             </div>
           ) : selectedChannel.channel_type === "voice" ? (
-            <ChannelVoiceRoom
-              key={selectedChannel.id}
-              channelId={selectedChannel.id}
-              channelName={selectedChannel.name}
-              voiceOnly
-              joinRequestId={voiceJoinRequestId}
-              onParticipantsChange={
-                handleVoiceParticipantsChange
-              }
-            />
+            activeVoiceChannel?.id === selectedChannel.id ? null : (
+              <ChannelVoiceRoom
+                key={selectedChannel.id}
+                channelId={selectedChannel.id}
+                channelName={selectedChannel.name}
+                voiceOnly
+                joinRequestId={voiceJoinRequestId}
+                onParticipantsChange={
+                  handleVoiceParticipantsChange
+                }
+                onLeave={handleVoiceLeave}
+              />
+            )
           ) : messagesLoading ? (
             <p className="text-sm text-gray-400">
               Đang tải tin nhắn...

@@ -46,6 +46,7 @@ type Props = {
     channelId: string,
     participants: VoiceParticipantSnapshot[],
   ) => void;
+  onLeave?: (channelId: string) => void;
 };
 
 function getAvatar(participant: Participant) {
@@ -284,6 +285,7 @@ export default function ChannelVoiceRoom({
   channelName,
   joinRequestId = 0,
   onParticipantsChange,
+  onLeave,
 }: Props) {
   const [connection, setConnection] = useState<ConnectionDetails | null>(null);
   const [joining, setJoining] = useState(false);
@@ -331,6 +333,12 @@ export default function ChannelVoiceRoom({
     void joinRoom();
   }, [joinRequestId, joinRoom]);
 
+  const leaveRoom = useCallback(() => {
+    setConnection(null);
+    onParticipantsChange?.(channelId, []);
+    onLeave?.(channelId);
+  }, [channelId, onLeave, onParticipantsChange]);
+
   if (!connection) {
     return (
       <section className="mb-4 overflow-hidden rounded-2xl border border-white/10 bg-[#232428] shadow-xl">
@@ -360,14 +368,14 @@ export default function ChannelVoiceRoom({
       connect
       audio
       video={false}
-      onDisconnected={() => setConnection(null)}
+      onDisconnected={leaveRoom}
       onError={(error) => setErrorMessage(error.message)}
       data-lk-theme="default"
     >
       <VoiceStage
         channelId={channelId}
         channelName={channelName}
-        onLeave={() => setConnection(null)}
+        onLeave={leaveRoom}
         onParticipantsChange={onParticipantsChange}
       />
     </LiveKitRoom>

@@ -442,6 +442,8 @@ export default function Home() {
     useState(false);
   const [globalVoiceJoinRequestId, setGlobalVoiceJoinRequestId] =
     useState(0);
+  const [globalVoiceActive, setGlobalVoiceActive] =
+    useState(false);
   const [globalVoiceParticipants, setGlobalVoiceParticipants] =
     useState<VoiceParticipantSnapshot[]>([]);
   const [messageInput, setMessageInput] = useState("");
@@ -2559,6 +2561,7 @@ export default function Home() {
             type="button"
             onClick={() => {
               setGlobalVoiceSelected(true);
+              setGlobalVoiceActive(true);
               setGlobalVoiceJoinRequestId(
                 (current) => current + 1,
               );
@@ -2737,8 +2740,14 @@ export default function Home() {
           </button>
         </header>
 
-        {globalVoiceSelected ? (
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-5 md:px-5">
+        {globalVoiceActive && (
+          <div
+            className={`overflow-y-auto px-3 py-5 md:px-5 ${
+              globalVoiceSelected
+                ? "min-h-0 flex-1"
+                : "max-h-[360px] shrink-0 border-b border-black/20"
+            }`}
+          >
             <ChannelVoiceRoom
               channelId="global"
               channelName="Phòng trò chuyện"
@@ -2747,9 +2756,15 @@ export default function Home() {
               onParticipantsChange={
                 handleGlobalVoiceParticipants
               }
+              onLeave={() => {
+                setGlobalVoiceActive(false);
+                setGlobalVoiceSelected(false);
+              }}
             />
           </div>
-        ) : (
+        )}
+
+        {!globalVoiceSelected && (
           <>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-5 [scrollbar-gutter:stable] md:px-5">
           <div className="mb-8">
