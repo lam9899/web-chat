@@ -16,7 +16,6 @@ import {
   type ServerInvitePreview,
   type ServerSummary,
   channelAvatarUrl,
-  channelTypeLabel,
 } from "./channel-types";
 
 const supabase = createClient();
@@ -37,7 +36,6 @@ type FriendRow = {
 };
 
 export default function ChannelRail({
-  activeChannelId = null,
   activeServerId = null,
 }: {
   activeChannelId?: string | null;
@@ -277,28 +275,6 @@ export default function ChannelRail({
         URL.revokeObjectURL(serverAvatarPreview);
     };
   }, [serverAvatarPreview]);
-
-  const onlineCounts = useMemo(() => {
-    const result = new Map<string, number>();
-
-    for (const channel of channels) {
-      result.set(
-        channel.id,
-        channel.visibility === "public"
-          ? onlineUserIds.size
-          : channel.member_ids.filter((id) =>
-              onlineUserIds.has(id),
-            ).length,
-      );
-    }
-
-    return result;
-  }, [channels, onlineUserIds]);
-
-  const standaloneChannels = useMemo(
-    () => channels.filter((channel) => !channel.server_id),
-    [channels],
-  );
 
   const serverUnreadCounts = useMemo(() => {
     const result = new Map<string, number>();
@@ -734,66 +710,6 @@ export default function ChannelRail({
           <div className="h-px w-9 shrink-0 bg-white/10" />
         )}
 
-        {standaloneChannels.map((channel) => {
-          const avatar = channelAvatarUrl(
-            supabase,
-            channel.avatar_path,
-          );
-          const online = onlineCounts.get(channel.id) ?? 0;
-          const unread = Number(channel.unread_count ?? 0);
-
-          return (
-            <button
-              key={channel.id}
-              type="button"
-              onClick={() => {
-                setShowMobileRail(false);
-                router.push(`/channels/${channel.id}`);
-              }}
-              title={`${channel.name} · ${channelTypeLabel(
-                channel.channel_type,
-              )}`}
-              className={`relative flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full border-2 transition hover:rounded-2xl ${
-                activeChannelId === channel.id
-                  ? "border-indigo-400 bg-indigo-500/20"
-                  : "border-transparent bg-[#313338]"
-              }`}
-            >
-              {avatar ? (
-                <img
-                  src={avatar}
-                  alt={channel.name}
-                  className="h-11 w-11 rounded-[inherit] object-cover"
-                />
-              ) : (
-                <span className="flex h-11 w-11 items-center justify-center rounded-[inherit] bg-indigo-500/20 font-black text-indigo-200">
-                  {channel.channel_type === "voice"
-                    ? "🔊"
-                    : channel.name.charAt(0).toUpperCase()}
-                </span>
-              )}
-
-              {channel.visibility === "private" && (
-                <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#2b2d31] text-[9px]">
-                  🔒
-                </span>
-              )}
-
-              {online > 0 && (
-                <span className="absolute -bottom-1 -left-1 flex min-h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#1e1f22] bg-green-500 px-1 text-[9px] font-black">
-                  {online > 99 ? "99+" : online}
-                </span>
-              )}
-
-              {unread > 0 && (
-                <span className="absolute -bottom-1 -right-1 flex min-h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#1e1f22] bg-red-500 px-1 text-[9px] font-black">
-                  {unread > 99 ? "99+" : unread}
-                </span>
-              )}
-            </button>
-          );
-        })}
-
         <button
           type="button"
           onClick={() => {
@@ -955,17 +871,6 @@ export default function ChannelRail({
                   {working ? "Đang tạo..." : "Tạo server"}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAddMenu(false);
-                    resetForm();
-                    setShowCreate(true);
-                  }}
-                  className="w-full rounded-xl px-4 py-2 text-xs font-semibold text-gray-400 hover:bg-white/5 hover:text-gray-200"
-                >
-                  Hoặc tạo kênh đơn lẻ kiểu cũ →
-                </button>
               </div>
             ) : (
               <div className="mt-5 space-y-4">

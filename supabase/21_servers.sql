@@ -37,6 +37,33 @@ create table if not exists public.server_members (
 alter table public.channels
   add column if not exists server_id uuid;
 
+-- Bản cơ sở dữ liệu cũ bắt tên kênh phải duy nhất trên toàn hệ thống.
+-- Điều đó làm server thứ hai không thể tạo kênh mặc định "#chung".
+-- Bỏ ràng buộc cũ và chỉ bắt tên duy nhất bên trong từng kênh tổng.
+do $$
+begin
+  if exists(
+    select 1
+    from pg_constraint
+    where conrelid = 'public.channels'::regclass
+      and conname = 'channels_name_unique_idx'
+  ) then
+    alter table public.channels
+      drop constraint channels_name_unique_idx;
+  end if;
+end
+$$;
+
+drop index if exists public.channels_name_unique_idx;
+
+create unique index if not exists channels_standalone_name_unique_idx
+on public.channels(lower(trim(name)))
+where server_id is null;
+
+create unique index if not exists channels_server_name_unique_idx
+on public.channels(server_id, lower(trim(name)))
+where server_id is not null;
+
 do $$
 begin
   if not exists(
