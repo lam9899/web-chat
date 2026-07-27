@@ -256,9 +256,9 @@ begin
       using errcode = '42501';
   end if;
 
-  select server_id into target_server_id
-  from public.channels
-  where id = p_channel_id;
+  select c.server_id into target_server_id
+  from public.channels c
+  where c.id = p_channel_id;
 
   return query
   select

@@ -153,11 +153,7 @@ export default function GameChannelRoom({
     ]);
 
     const firstError =
-      catalogError ||
-      summaryError ||
-      playerError ||
-      inviteError ||
-      friendError;
+      catalogError || summaryError || playerError;
 
     if (firstError) {
       setErrorMessage(firstError.message);
@@ -182,12 +178,23 @@ export default function GameChannelRoom({
     setCatalog(nextCatalog);
     setSummary(nextSummary);
     setPlayers((playerRows ?? []) as GamePlayer[]);
-    setSeatInvites((inviteRows ?? []) as GameSeatInvite[]);
+    setSeatInvites(
+      inviteError
+        ? []
+        : ((inviteRows ?? []) as GameSeatInvite[]),
+    );
     setInvitableFriends(
-      (friendRows ?? []) as InvitableFriend[],
+      friendError
+        ? []
+        : ((friendRows ?? []) as InvitableFriend[]),
     );
     setLoading(false);
-    setErrorMessage("");
+    const optionalError = inviteError || friendError;
+    setErrorMessage(
+      optionalError
+        ? `Một phần dữ liệu mời bạn chưa tải được: ${optionalError.message}`
+        : "",
+    );
     onSummaryChange?.(nextSummary);
   }, [channelId, onSummaryChange, serverId]);
 
