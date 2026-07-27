@@ -515,6 +515,9 @@ export default function DynamicChannelPage() {
             <ChannelVoiceRoom
               channelId={channel.id}
               channelName={channel.name}
+              joinRequestId={
+                channel.channel_type === "voice" ? 1 : 0
+              }
               voiceOnly={
                 channel.channel_type === "voice"
               }

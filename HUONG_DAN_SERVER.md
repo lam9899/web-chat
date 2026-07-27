@@ -5,7 +5,7 @@
 Mỗi **server** có nhiều kênh văn bản + kênh thoại riêng, giống Discord:
 
 - Cột ngoài cùng bên trái giờ hiển thị: nút Kênh chung → **danh sách server** → các kênh đơn lẻ kiểu cũ → nút **+** → chuông lời mời.
-- Ai cũng tạo được server (tối đa 5 server/người). Server mới có sẵn kênh `#chung` và `🔊 Phòng thoại`.
+- Ai cũng tạo được kênh tổng/server (tối đa 5 kênh tổng/người). Kênh tổng mới có sẵn kênh `#chung` và `🔊 Phòng trò chuyện`.
 - Tham gia bằng **mã mời** 12 ký tự (bấm + → "Nhập mã mời"). Mọi thành viên xem được mã để chia sẻ; chủ server/quản lý đổi được mã mới.
 - Trong server: chủ server và quản lý (🛡️) tạo/sửa/xóa kênh, sửa thông tin server, kick thành viên; chủ server phong/bỏ quản lý và xóa server.
 - Danh sách thành viên hiển thị nhãn AD/QT/TV, ID 6 số, online/offline và thời gian hoạt động gần nhất.

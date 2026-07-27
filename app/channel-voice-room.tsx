@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ControlBar,
   GridLayout,
@@ -35,6 +41,7 @@ type Props = {
   channelId: string;
   channelName: string;
   voiceOnly?: boolean;
+  joinRequestId?: number;
   onParticipantsChange?: (
     channelId: string,
     participants: VoiceParticipantSnapshot[],
@@ -275,13 +282,15 @@ function VoiceStage({
 export default function ChannelVoiceRoom({
   channelId,
   channelName,
+  joinRequestId = 0,
   onParticipantsChange,
 }: Props) {
   const [connection, setConnection] = useState<ConnectionDetails | null>(null);
   const [joining, setJoining] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const handledJoinRequestRef = useRef(0);
 
-  async function joinRoom() {
+  const joinRoom = useCallback(async () => {
     if (joining || connection) return;
     setJoining(true);
     setErrorMessage("");
@@ -308,7 +317,19 @@ export default function ChannelVoiceRoom({
     } finally {
       setJoining(false);
     }
-  }
+  }, [channelId, connection, joining]);
+
+  useEffect(() => {
+    if (
+      joinRequestId <= 0 ||
+      handledJoinRequestRef.current === joinRequestId
+    ) {
+      return;
+    }
+
+    handledJoinRequestRef.current = joinRequestId;
+    void joinRoom();
+  }, [joinRequestId, joinRoom]);
 
   if (!connection) {
     return (

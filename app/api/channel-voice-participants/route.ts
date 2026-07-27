@@ -79,7 +79,8 @@ export async function POST(request: NextRequest) {
             body.channel_ids.filter(
               (value): value is string =>
                 typeof value === "string" &&
-                UUID_PATTERN.test(value),
+                (value === "global" ||
+                  UUID_PATTERN.test(value)),
             ),
           ),
         ).slice(0, MAX_CHANNELS_PER_REQUEST)
@@ -141,26 +142,37 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: visibleRows, error: channelError } =
-      await supabase.rpc("get_visible_channels");
+    const allowedChannelIds = new Set<string>();
 
-    if (channelError) {
-      return NextResponse.json(
-        { error: "Không thể kiểm tra quyền xem kênh thoại." },
-        { status: 403 },
-      );
+    if (requestedChannelIds.includes("global")) {
+      allowedChannelIds.add("global");
     }
 
-    const allowedChannelIds = new Set(
-      ((visibleRows ?? []) as VisibleChannel[])
-        .filter(
-          (channel) =>
-            requestedChannelIds.includes(channel.id) &&
-            (channel.channel_type === "voice" ||
-              channel.channel_type === "both"),
-        )
-        .map((channel) => channel.id),
+    const dynamicChannelIds = requestedChannelIds.filter(
+      (channelId) => UUID_PATTERN.test(channelId),
     );
+
+    if (dynamicChannelIds.length > 0) {
+      const { data: visibleRows, error: channelError } =
+        await supabase.rpc("get_visible_channels");
+
+      if (channelError) {
+        return NextResponse.json(
+          { error: "Không thể kiểm tra quyền xem kênh thoại." },
+          { status: 403 },
+        );
+      }
+
+      for (const channel of (visibleRows ?? []) as VisibleChannel[]) {
+        if (
+          dynamicChannelIds.includes(channel.id) &&
+          (channel.channel_type === "voice" ||
+            channel.channel_type === "both")
+        ) {
+          allowedChannelIds.add(channel.id);
+        }
+      }
+    }
 
     const roomClient = new RoomServiceClient(
       roomServiceUrl(liveKitUrl),

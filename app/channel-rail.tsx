@@ -940,8 +940,8 @@ export default function ChannelRail({
                 </div>
 
                 <p className="rounded-xl bg-[#1e1f22] px-4 py-3 text-xs text-gray-400">
-                  Server mới có sẵn kênh văn bản <strong>#chung</strong> và kênh thoại{" "}
-                  <strong>🔊 Phòng thoại</strong>. Bạn có thể thêm kênh sau.
+                  Kênh tổng mới có sẵn kênh văn bản <strong>#chung</strong> và kênh thoại{" "}
+                  <strong>🔊 Phòng trò chuyện</strong>. Bạn có thể thêm kênh sau.
                 </p>
 
                 <button

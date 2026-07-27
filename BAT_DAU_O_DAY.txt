@@ -1,0 +1,35 @@
+TALK CÙNG LÂM DZ — CÁCH CẬP NHẬT BẢN SERVER/KÊNH THOẠI
+
+1. Sao lưu thư mục dự án đang dùng trên máy.
+
+2. Giải nén file ZIP này, rồi chép toàn bộ nội dung thư mục web-chat
+   vào thư mục dự án thật.
+
+3. Giữ lại file .env.local của dự án cũ trên máy.
+   Không gửi file này cho người khác và không đưa lên GitHub.
+   Vercel vẫn giữ các Environment Variables đã cài trước đó.
+
+4. Trong Supabase SQL Editor:
+   - Nếu 20_dynamic_channels.sql đã chạy: chỉ chạy 21_servers.sql.
+   - Nếu file 20 chưa từng chạy: chạy 20 trước, sau đó chạy 21.
+
+5. Kiểm tra trên máy:
+   npm install
+   npm run dev
+
+6. Khi đã kiểm tra xong, đẩy lên nhánh main:
+   git add .
+   git commit -m "Hoan thien server va kenh thoai"
+   git push origin main
+
+7. Vercel sẽ tự triển khai website talkcunglamdz.vercel.app.
+
+KIỂM TRA NHANH SAU KHI TRIỂN KHAI
+
+- Tạo server mới và đổi avatar.
+- Mở bằng tài khoản thứ hai, nhập mã mời 12 ký tự.
+- Gửi tin nhắn để kiểm tra chấm đỏ chưa đọc.
+- Bấm trực tiếp "Phòng trò chuyện" bằng hai tài khoản để vào kênh thoại.
+- Kiểm tra avatar người trong phòng nằm dưới tên kênh.
+- Nói thử: avatar người đang nói phải có viền xanh.
+- Thu nhỏ trình duyệt như điện thoại và kiểm tra nút ☰ góc dưới trái.

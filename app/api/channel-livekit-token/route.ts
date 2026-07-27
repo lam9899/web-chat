@@ -100,21 +100,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const {
-      data: channelRows,
-      error: channelError,
-    } = await supabase.rpc(
-      "get_channel_detail",
-      {
-        p_channel_id: channelId,
-      },
-    );
+    let channel: ChannelRow | null = null;
+    let channelError: { message?: string } | null = null;
 
-    const channel = (
-      Array.isArray(channelRows)
-        ? channelRows[0]
-        : null
-    ) as ChannelRow | null;
+    if (channelId === "global") {
+      channel = {
+        id: "global",
+        name: "Phòng trò chuyện",
+        channel_type: "voice",
+      };
+    } else {
+      const result = await supabase.rpc(
+        "get_channel_detail",
+        {
+          p_channel_id: channelId,
+        },
+      );
+
+      channelError = result.error;
+      channel = (
+        Array.isArray(result.data)
+          ? result.data[0]
+          : null
+      ) as ChannelRow | null;
+    }
 
     if (channelError || !channel) {
       return NextResponse.json(

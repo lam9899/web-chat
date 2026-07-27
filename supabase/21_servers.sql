@@ -404,12 +404,20 @@ begin
   insert into public.channels(slug, name, description, owner_id, visibility, channel_type, server_id)
   values(
     left(base_slug, 24) || '-thoai-' || substring(gen_random_uuid()::text, 1, 6),
-    'Phòng thoại', 'Kênh thoại của server', uid, 'private', 'voice', new_server_id
+    'Phòng trò chuyện', 'Kênh thoại của server', uid, 'private', 'voice', new_server_id
   );
 
   return new_server_id;
 end;
 $$;
+
+-- Đổi tên kênh thoại mặc định của những server đã tạo bằng bản trước.
+-- Chỉ đổi đúng tên mặc định cũ, không chạm vào kênh người dùng đã đặt tên khác.
+update public.channels
+set name = 'Phòng trò chuyện'
+where server_id is not null
+  and channel_type = 'voice'
+  and name = 'Phòng thoại';
 
 create or replace function public.preview_server_invite(p_code text)
 returns table(

@@ -3,6 +3,7 @@
 import {
   ChangeEvent,
   FormEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -16,6 +17,9 @@ import MemberBadge, {
 } from "@/components/member-badge";
 import FriendManager from "./messages/friend-manager";
 import ChannelRail from "./channel-rail";
+import ChannelVoiceRoom, {
+  type VoiceParticipantSnapshot,
+} from "./channel-voice-room";
 
 const supabase = createClient();
 
@@ -434,6 +438,12 @@ export default function Home() {
   );
 
   const [selectedChannel, setSelectedChannel] = useState("chung");
+  const [globalVoiceSelected, setGlobalVoiceSelected] =
+    useState(false);
+  const [globalVoiceJoinRequestId, setGlobalVoiceJoinRequestId] =
+    useState(0);
+  const [globalVoiceParticipants, setGlobalVoiceParticipants] =
+    useState<VoiceParticipantSnapshot[]>([]);
   const [messageInput, setMessageInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -543,8 +553,11 @@ export default function Home() {
     const savedState = window.localStorage.getItem(
       "friends-sidebar-collapsed",
     );
+    const timer = window.setTimeout(() => {
+      setFriendsSidebarCollapsed(savedState === "1");
+    }, 0);
 
-    setFriendsSidebarCollapsed(savedState === "1");
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -580,8 +593,80 @@ export default function Home() {
     () =>
       channels.find((channel) => channel.id === selectedChannel) ??
       channels[0],
-    [selectedChannel],
+    [channels, selectedChannel],
   );
+
+  const handleGlobalVoiceParticipants = useCallback(
+    (
+      channelId: string,
+      participants: VoiceParticipantSnapshot[],
+    ) => {
+      if (channelId === "global") {
+        setGlobalVoiceParticipants(participants);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!userId) return;
+
+    let active = true;
+
+    async function loadGlobalVoiceParticipants() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) return;
+
+      try {
+        const response = await fetch(
+          "/api/channel-voice-participants",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({
+              channel_ids: ["global"],
+            }),
+          },
+        );
+
+        if (!response.ok || !active) return;
+
+        const result = (await response.json()) as {
+          channels?: Record<
+            string,
+            VoiceParticipantSnapshot[]
+          >;
+        };
+
+        setGlobalVoiceParticipants(
+          result.channels?.global ?? [],
+        );
+      } catch {
+        // LiveKit tạm mất kết nối: giữ danh sách hiện tại và thử lại.
+      }
+    }
+
+    const initialTimer = window.setTimeout(
+      () => void loadGlobalVoiceParticipants(),
+      0,
+    );
+    const timer = window.setInterval(
+      () => void loadGlobalVoiceParticipants(),
+      8_000,
+    );
+
+    return () => {
+      active = false;
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, [userId]);
 
   const onlineUserIds = useMemo(
     () =>
@@ -1263,7 +1348,11 @@ export default function Home() {
         (channel) => channel.id === selectedChannel,
       )
     ) {
-      setSelectedChannel(channels[0].id);
+      const timer = window.setTimeout(() => {
+        setSelectedChannel(channels[0].id);
+      }, 0);
+
+      return () => window.clearTimeout(timer);
     }
   }, [channels, selectedChannel]);
 
@@ -1554,6 +1643,7 @@ export default function Home() {
 
   function selectChannel(channelId: string) {
     setSelectedChannel(channelId);
+    setGlobalVoiceSelected(false);
     setShowChannels(false);
     setShowComposerEmojiPicker(false);
   }
@@ -2465,9 +2555,99 @@ export default function Home() {
             Kênh thoại
           </div>
 
-          <button className="flex w-full items-center gap-2 rounded px-2 py-2 text-gray-400 hover:bg-white/5">
-            🔊 Phòng trò chuyện
+          <button
+            type="button"
+            onClick={() => {
+              setGlobalVoiceSelected(true);
+              setGlobalVoiceJoinRequestId(
+                (current) => current + 1,
+              );
+              setShowChannels(false);
+            }}
+            className={`flex w-full items-center gap-2 rounded px-2 py-2 text-left ${
+              globalVoiceSelected
+                ? "bg-white/10 text-white"
+                : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
+            }`}
+          >
+            <span>🔊</span>
+            <span className="min-w-0 flex-1 truncate">
+              Phòng trò chuyện
+            </span>
+            {globalVoiceParticipants.length > 0 && (
+              <span className="rounded-full bg-green-500/15 px-1.5 py-0.5 text-[10px] font-black text-green-300">
+                {globalVoiceParticipants.length}
+              </span>
+            )}
           </button>
+
+          {globalVoiceParticipants.length > 0 && (
+            <div className="ml-5">
+              {globalVoiceParticipants.map(
+                (participant, index) => (
+                  <div
+                    key={participant.user_id}
+                    className="relative ml-3 flex min-h-10 items-center gap-2 py-1 text-gray-300"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`absolute -left-3 top-0 w-2.5 border-l border-gray-600 ${
+                        index ===
+                        globalVoiceParticipants.length - 1
+                          ? "h-5 rounded-bl-md border-b"
+                          : "h-full"
+                      }`}
+                    />
+
+                    <span className="relative shrink-0">
+                      {participant.avatar_url ? (
+                        <img
+                          src={participant.avatar_url}
+                          alt={participant.username}
+                          className={`h-7 w-7 rounded-full object-cover transition ${
+                            participant.is_speaking
+                              ? "ring-2 ring-green-400 ring-offset-1 ring-offset-[#2b2d31]"
+                              : "ring-1 ring-white/10"
+                          }`}
+                        />
+                      ) : (
+                        <span
+                          className={`flex h-7 w-7 items-center justify-center rounded-full bg-indigo-500 text-[11px] font-black ${
+                            participant.is_speaking
+                              ? "ring-2 ring-green-400 ring-offset-1 ring-offset-[#2b2d31]"
+                              : "ring-1 ring-white/10"
+                          }`}
+                        >
+                          {participant.username
+                            .charAt(0)
+                            .toUpperCase()}
+                        </span>
+                      )}
+                    </span>
+
+                    <span
+                      className={`min-w-0 flex-1 truncate text-xs font-semibold ${
+                        participant.is_speaking
+                          ? "text-green-300"
+                          : "text-gray-300"
+                      }`}
+                    >
+                      {participant.username}
+                    </span>
+
+                    {participant.is_muted && (
+                      <span
+                        title="Đã tắt micro"
+                        className="text-[10px] text-red-300"
+                      >
+                        🔇
+                      </span>
+                    )}
+                  </div>
+                ),
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-3 bg-[#232428] p-3">
@@ -2522,19 +2702,31 @@ export default function Home() {
             ☰
           </button>
 
-          <span className="text-2xl text-gray-400">#</span>
-          <strong>{activeChannel.label}</strong>
+          <span className="text-2xl text-gray-400">
+            {globalVoiceSelected ? "🔊" : "#"}
+          </span>
+          <strong>
+            {globalVoiceSelected
+              ? "Phòng trò chuyện"
+              : activeChannel.label}
+          </strong>
 
           <span className="hidden min-w-0 flex-1 truncate text-sm text-gray-400 sm:block">
-            {activeChannel.description}
+            {globalVoiceSelected
+              ? "Kênh thoại chung của Talk Cùng Lâm DZ"
+              : activeChannel.description}
           </span>
 
-          <input
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Tìm tin nhắn"
-            className="ml-auto hidden w-40 rounded bg-[#1e1f22] px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-indigo-500 sm:block"
-          />
+          {!globalVoiceSelected && (
+            <input
+              value={searchQuery}
+              onChange={(event) =>
+                setSearchQuery(event.target.value)
+              }
+              placeholder="Tìm tin nhắn"
+              className="ml-auto hidden w-40 rounded bg-[#1e1f22] px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-indigo-500 sm:block"
+            />
+          )}
 
           <button
             type="button"
@@ -2545,6 +2737,20 @@ export default function Home() {
           </button>
         </header>
 
+        {globalVoiceSelected ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-5 md:px-5">
+            <ChannelVoiceRoom
+              channelId="global"
+              channelName="Phòng trò chuyện"
+              voiceOnly
+              joinRequestId={globalVoiceJoinRequestId}
+              onParticipantsChange={
+                handleGlobalVoiceParticipants
+              }
+            />
+          </div>
+        ) : (
+          <>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-5 [scrollbar-gutter:stable] md:px-5">
           <div className="mb-8">
             <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-[#41434a] text-4xl">
@@ -3330,6 +3536,8 @@ export default function Home() {
             </div>
           </form>
         </div>
+          </>
+        )}
       </section>
 
       {/* Bạn bè */}

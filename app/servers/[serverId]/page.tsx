@@ -85,6 +85,8 @@ export default function ServerPage() {
   const [selectedChannelId, setSelectedChannelId] = useState<
     string | null
   >(null);
+  const [voiceJoinRequestId, setVoiceJoinRequestId] =
+    useState(0);
 
   const [messageInput, setMessageInput] = useState("");
   const [loading, setLoading] = useState(true);
@@ -564,6 +566,9 @@ export default function ServerPage() {
 
   function selectChannel(channel: DynamicChannel) {
     setSelectedChannelId(channel.id);
+    if (channel.channel_type === "voice") {
+      setVoiceJoinRequestId((current) => current + 1);
+    }
     setShowSidebar(false);
     setErrorMessage("");
   }
@@ -1367,6 +1372,7 @@ export default function ServerPage() {
               channelId={selectedChannel.id}
               channelName={selectedChannel.name}
               voiceOnly
+              joinRequestId={voiceJoinRequestId}
               onParticipantsChange={
                 handleVoiceParticipantsChange
               }
