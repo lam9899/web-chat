@@ -88,6 +88,10 @@ export default function ServerPage() {
   const [openChannelIds, setOpenChannelIds] = useState<string[]>(
     [],
   );
+  const [draggedChannelTabId, setDraggedChannelTabId] =
+    useState<string | null>(null);
+  const [dragOverChannelTabId, setDragOverChannelTabId] =
+    useState<string | null>(null);
   const [voiceJoinRequestId, setVoiceJoinRequestId] =
     useState(0);
   const [activeVoiceChannelId, setActiveVoiceChannelId] =
@@ -644,6 +648,24 @@ export default function ServerPage() {
       ] ?? null;
     setSelectedChannelId(nextChannelId);
     setErrorMessage("");
+  }
+
+  function moveChannelTab(
+    draggedChannelId: string,
+    targetChannelId: string,
+  ) {
+    if (draggedChannelId === targetChannelId) return;
+
+    setOpenChannelIds((current) => {
+      const draggedIndex = current.indexOf(draggedChannelId);
+      const targetIndex = current.indexOf(targetChannelId);
+      if (draggedIndex < 0 || targetIndex < 0) return current;
+
+      const next = [...current];
+      const [draggedId] = next.splice(draggedIndex, 1);
+      next.splice(targetIndex, 0, draggedId);
+      return next;
+    });
   }
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
@@ -1414,10 +1436,52 @@ export default function ServerPage() {
                   key={channel.id}
                   role="tab"
                   aria-selected={active}
-                  className={`group flex h-11 min-w-[132px] max-w-[220px] shrink-0 items-center overflow-hidden rounded-t-xl border border-b-0 transition ${
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData(
+                      "text/plain",
+                      channel.id,
+                    );
+                    setDraggedChannelTabId(channel.id);
+                    setDragOverChannelTabId(channel.id);
+                  }}
+                  onDragEnter={() =>
+                    setDragOverChannelTabId(channel.id)
+                  }
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const draggedId =
+                      draggedChannelTabId ||
+                      event.dataTransfer.getData("text/plain");
+                    if (draggedId) {
+                      moveChannelTab(draggedId, channel.id);
+                    }
+                    setDraggedChannelTabId(null);
+                    setDragOverChannelTabId(null);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedChannelTabId(null);
+                    setDragOverChannelTabId(null);
+                  }}
+                  title="Giữ chuột và kéo để đổi vị trí tab"
+                  className={`group flex h-11 min-w-[132px] max-w-[220px] shrink-0 cursor-grab items-center overflow-hidden rounded-t-xl border border-b-0 transition active:cursor-grabbing ${
                     active
                       ? "border-black/20 bg-[#313338] text-white"
                       : "border-white/5 bg-[#2b2d31] text-gray-400 hover:bg-[#35373c] hover:text-gray-200"
+                  } ${
+                    draggedChannelTabId === channel.id
+                      ? "opacity-50"
+                      : ""
+                  } ${
+                    dragOverChannelTabId === channel.id &&
+                    draggedChannelTabId !== channel.id
+                      ? "ring-2 ring-inset ring-indigo-400"
+                      : ""
                   }`}
                 >
                   <button
@@ -1468,17 +1532,25 @@ export default function ServerPage() {
           )}
 
           {activeVoiceChannel && (
-            <ChannelVoiceRoom
-              key={activeVoiceChannel.id}
-              channelId={activeVoiceChannel.id}
-              channelName={activeVoiceChannel.name}
-              voiceOnly
-              joinRequestId={voiceJoinRequestId}
-              onParticipantsChange={
-                handleVoiceParticipantsChange
+            <div
+              className={
+                selectedChannel?.id === activeVoiceChannel.id
+                  ? ""
+                  : "hidden"
               }
-              onLeave={handleVoiceLeave}
-            />
+            >
+              <ChannelVoiceRoom
+                key={activeVoiceChannel.id}
+                channelId={activeVoiceChannel.id}
+                channelName={activeVoiceChannel.name}
+                voiceOnly
+                joinRequestId={voiceJoinRequestId}
+                onParticipantsChange={
+                  handleVoiceParticipantsChange
+                }
+                onLeave={handleVoiceLeave}
+              />
+            </div>
           )}
 
           {!selectedChannel ? (

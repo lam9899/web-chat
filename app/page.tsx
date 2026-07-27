@@ -491,6 +491,10 @@ export default function Home() {
   const [openMainTabIds, setOpenMainTabIds] = useState<string[]>(
     ["chung"],
   );
+  const [draggedMainTabId, setDraggedMainTabId] =
+    useState<string | null>(null);
+  const [dragOverMainTabId, setDragOverMainTabId] =
+    useState<string | null>(null);
   const [globalVoiceSelected, setGlobalVoiceSelected] =
     useState(false);
   const [globalVoiceJoinRequestId, setGlobalVoiceJoinRequestId] =
@@ -1842,6 +1846,24 @@ export default function Home() {
     }
   }
 
+  function moveMainTab(
+    draggedTabId: string,
+    targetTabId: string,
+  ) {
+    if (draggedTabId === targetTabId) return;
+
+    setOpenMainTabIds((current) => {
+      const draggedIndex = current.indexOf(draggedTabId);
+      const targetIndex = current.indexOf(targetTabId);
+      if (draggedIndex < 0 || targetIndex < 0) return current;
+
+      const next = [...current];
+      const [draggedId] = next.splice(draggedIndex, 1);
+      next.splice(targetIndex, 0, draggedId);
+      return next;
+    });
+  }
+
   function openEditChannel(channel: ChannelItem) {
     if (!channel.canManage || !channel.databaseId) return;
 
@@ -3054,10 +3076,52 @@ export default function Home() {
                   key={tab.id}
                   role="tab"
                   aria-selected={active}
-                  className={`group flex h-11 min-w-[132px] max-w-[220px] shrink-0 items-center overflow-hidden rounded-t-xl border border-b-0 transition ${
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData(
+                      "text/plain",
+                      tab.id,
+                    );
+                    setDraggedMainTabId(tab.id);
+                    setDragOverMainTabId(tab.id);
+                  }}
+                  onDragEnter={() =>
+                    setDragOverMainTabId(tab.id)
+                  }
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const draggedId =
+                      draggedMainTabId ||
+                      event.dataTransfer.getData("text/plain");
+                    if (draggedId) {
+                      moveMainTab(draggedId, tab.id);
+                    }
+                    setDraggedMainTabId(null);
+                    setDragOverMainTabId(null);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedMainTabId(null);
+                    setDragOverMainTabId(null);
+                  }}
+                  title="Giữ chuột và kéo để đổi vị trí tab"
+                  className={`group flex h-11 min-w-[132px] max-w-[220px] shrink-0 cursor-grab items-center overflow-hidden rounded-t-xl border border-b-0 transition active:cursor-grabbing ${
                     active
                       ? "border-black/20 bg-[#313338] text-white"
                       : "border-white/5 bg-[#2b2d31] text-gray-400 hover:bg-[#35373c] hover:text-gray-200"
+                  } ${
+                    draggedMainTabId === tab.id
+                      ? "opacity-50"
+                      : ""
+                  } ${
+                    dragOverMainTabId === tab.id &&
+                    draggedMainTabId !== tab.id
+                      ? "ring-2 ring-inset ring-indigo-400"
+                      : ""
                   }`}
                 >
                   <button
@@ -3111,11 +3175,11 @@ export default function Home() {
 
         {globalVoiceActive && (
           <div
-            className={`overflow-y-auto px-3 py-5 md:px-5 ${
+            className={
               globalVoiceSelected
-                ? "min-h-0 flex-1"
-                : "max-h-[360px] shrink-0 border-b border-black/20"
-            }`}
+                ? "min-h-0 flex-1 overflow-y-auto px-3 py-5 md:px-5"
+                : "hidden"
+            }
           >
             <ChannelVoiceRoom
               channelId="global"
