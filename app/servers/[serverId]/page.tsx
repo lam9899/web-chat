@@ -85,6 +85,9 @@ export default function ServerPage() {
   const [selectedChannelId, setSelectedChannelId] = useState<
     string | null
   >(null);
+  const [openChannelIds, setOpenChannelIds] = useState<string[]>(
+    [],
+  );
   const [voiceJoinRequestId, setVoiceJoinRequestId] =
     useState(0);
   const [activeVoiceChannelId, setActiveVoiceChannelId] =
@@ -121,6 +124,7 @@ export default function ServerPage() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const selectedChannelIdRef = useRef<string | null>(null);
+  const tabsInitializedRef = useRef(false);
 
   useEffect(() => {
     selectedChannelIdRef.current = selectedChannelId;
@@ -158,9 +162,16 @@ export default function ServerPage() {
       return;
     }
 
-    setChannels(
-      ((data ?? []) as DynamicChannel[]).filter(
-        (channel) => channel.server_id === serverId,
+    const loadedChannels = (
+      (data ?? []) as DynamicChannel[]
+    ).filter((channel) => channel.server_id === serverId);
+
+    setChannels(loadedChannels);
+    setOpenChannelIds((current) =>
+      current.filter((channelId) =>
+        loadedChannels.some(
+          (channel) => channel.id === channelId,
+        ),
       ),
     );
   }, [serverId]);
@@ -401,6 +412,21 @@ export default function ServerPage() {
     [channels, selectedChannelId],
   );
 
+  const openChannels = useMemo(
+    () =>
+      openChannelIds
+        .map((channelId) =>
+          channels.find(
+            (channel) => channel.id === channelId,
+          ),
+        )
+        .filter(
+          (channel): channel is DynamicChannel =>
+            channel !== undefined,
+        ),
+    [channels, openChannelIds],
+  );
+
   const activeVoiceChannel = useMemo(
     () =>
       voiceChannels.find(
@@ -419,15 +445,15 @@ export default function ServerPage() {
     }));
   }, []);
 
-  // Chọn kênh mặc định (theo ?channel= hoặc kênh văn bản đầu tiên).
+  // Mở tab đầu tiên (theo ?channel= hoặc kênh văn bản đầu tiên).
   useEffect(() => {
-    if (loading || channels.length === 0) return;
-
-    const stillValid = channels.some(
-      (channel) => channel.id === selectedChannelIdRef.current,
-    );
-
-    if (stillValid) return;
+    if (
+      loading ||
+      channels.length === 0 ||
+      tabsInitializedRef.current
+    ) {
+      return;
+    }
 
     const requested = new URLSearchParams(
       window.location.search,
@@ -444,7 +470,9 @@ export default function ServerPage() {
       ) ??
       channels[0];
 
+    tabsInitializedRef.current = true;
     setSelectedChannelId(fallback?.id ?? null);
+    setOpenChannelIds(fallback ? [fallback.id] : []);
   }, [channels, loading]);
 
   // Tải tin nhắn khi đổi kênh văn bản.
@@ -585,12 +613,36 @@ export default function ServerPage() {
   );
 
   function selectChannel(channel: DynamicChannel) {
+    setOpenChannelIds((current) =>
+      current.includes(channel.id)
+        ? current
+        : [...current, channel.id],
+    );
     setSelectedChannelId(channel.id);
     if (channel.channel_type === "voice") {
       setActiveVoiceChannelId(channel.id);
       setVoiceJoinRequestId((current) => current + 1);
     }
     setShowSidebar(false);
+    setErrorMessage("");
+  }
+
+  function closeChannelTab(channelId: string) {
+    const closedIndex = openChannelIds.indexOf(channelId);
+    if (closedIndex < 0) return;
+
+    const nextOpenChannelIds = openChannelIds.filter(
+      (openChannelId) => openChannelId !== channelId,
+    );
+    setOpenChannelIds(nextOpenChannelIds);
+
+    if (selectedChannelId !== channelId) return;
+
+    const nextChannelId =
+      nextOpenChannelIds[
+        Math.min(closedIndex, nextOpenChannelIds.length - 1)
+      ] ?? null;
+    setSelectedChannelId(nextChannelId);
     setErrorMessage("");
   }
 
@@ -640,7 +692,15 @@ export default function ServerPage() {
       setNewChannelName("");
       setNewChannelType("text");
       await loadChannels();
-      if (data) setSelectedChannelId(data as string);
+      if (data) {
+        const channelId = data as string;
+        setOpenChannelIds((current) =>
+          current.includes(channelId)
+            ? current
+            : [...current, channelId],
+        );
+        setSelectedChannelId(channelId);
+      }
     }
 
     setWorking(false);
@@ -662,6 +722,7 @@ export default function ServerPage() {
 
     if (error) setErrorMessage(error.message);
     else {
+      closeChannelTab(editChannel.id);
       setEditChannel(null);
       await loadChannels();
     }
@@ -1324,44 +1385,75 @@ export default function ServerPage() {
 
       {/* Nội dung kênh đang chọn */}
       <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-        <header className="flex h-[64px] shrink-0 items-center gap-3 border-b border-black/20 px-4 shadow">
+        <header className="flex h-[58px] shrink-0 items-end gap-2 border-b border-black/30 bg-[#202225] px-2 pt-2 shadow">
           <button
             type="button"
             onClick={() => setShowSidebar(true)}
-            className="rounded p-2 text-xl text-gray-300 md:hidden"
+            className="mb-1.5 rounded p-2 text-xl text-gray-300 md:hidden"
             aria-label="Mở danh sách kênh"
           >
             ☰
           </button>
 
-          {selectedChannel ? (
-            <>
-              <span className="text-2xl font-black text-gray-400">
-                {selectedChannel.channel_type === "voice"
-                  ? "🔊"
-                  : "#"}
+          <div
+            role="tablist"
+            aria-label={`Các kênh đang mở trong ${server.name}`}
+            className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto [scrollbar-width:thin]"
+          >
+            {openChannels.length === 0 && (
+              <span className="mb-3 px-3 text-sm text-gray-500">
+                Bấm một kênh bên trái để mở tab
               </span>
-              <div className="min-w-0 flex-1">
-                <h1 className="truncate font-black">
-                  {selectedChannel.name}
-                </h1>
-                <p className="truncate text-xs text-gray-400">
-                  {server.name}
-                </p>
-              </div>
-            </>
-          ) : (
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate font-black">
-                {server.name}
-              </h1>
-            </div>
-          )}
+            )}
+
+            {openChannels.map((channel) => {
+              const active = selectedChannelId === channel.id;
+
+              return (
+                <div
+                  key={channel.id}
+                  role="tab"
+                  aria-selected={active}
+                  className={`group flex h-11 min-w-[132px] max-w-[220px] shrink-0 items-center overflow-hidden rounded-t-xl border border-b-0 transition ${
+                    active
+                      ? "border-black/20 bg-[#313338] text-white"
+                      : "border-white/5 bg-[#2b2d31] text-gray-400 hover:bg-[#35373c] hover:text-gray-200"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => selectChannel(channel)}
+                    title={channel.name}
+                    className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 text-left"
+                  >
+                    <span className="shrink-0 text-sm">
+                      {channel.channel_type === "voice"
+                        ? "🔊"
+                        : "#"}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-bold">
+                      {channel.name}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => closeChannelTab(channel.id)}
+                    aria-label={`Đóng tab ${channel.name}`}
+                    title="Đóng tab"
+                    className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-lg text-gray-400 hover:bg-white/10 hover:text-white"
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          </div>
 
           <button
             type="button"
             onClick={() => setShowInvite(true)}
-            className="flex h-9 items-center gap-2 rounded-xl bg-indigo-500/20 px-3 text-sm font-bold text-indigo-200 transition hover:bg-indigo-500/30"
+            className="mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl bg-indigo-500/20 px-3 text-sm font-bold text-indigo-200 transition hover:bg-indigo-500/30"
             title="Mời bạn bè vào server"
           >
             🎟️ <span className="hidden sm:inline">Mời</span>
@@ -1392,12 +1484,17 @@ export default function ServerPage() {
           {!selectedChannel ? (
             <div className="flex h-full items-center justify-center text-center text-gray-400">
               <div>
-                <div className="text-5xl">📂</div>
+                <div className="text-5xl">
+                  {channels.length === 0 ? "📂" : "🗂️"}
+                </div>
                 <p className="mt-3">
-                  Server chưa có kênh nào.
-                  {server.can_manage
-                    ? " Hãy bấm + ở cột bên trái để tạo kênh."
-                    : ""}
+                  {channels.length === 0
+                    ? `Server chưa có kênh nào.${
+                        server.can_manage
+                          ? " Hãy bấm + ở cột bên trái để tạo kênh."
+                          : ""
+                      }`
+                    : "Chưa có tab nào đang mở. Hãy bấm một kênh ở cột bên trái."}
                 </p>
               </div>
             </div>

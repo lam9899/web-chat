@@ -74,9 +74,15 @@ const GLOBAL_PRESENCE_EVENT =
   "talk-global-presence-sync";
 
 type ChannelItem = {
+  databaseId: string | null;
   id: string;
   label: string;
   description: string;
+  visibility: "public" | "private";
+  channelType: "text" | "voice" | "both";
+  isLocked: boolean;
+  isSystem: boolean;
+  canManage: boolean;
 };
 
 type TypingPayload = {
@@ -148,26 +154,56 @@ const reportCategoryOptions: Array<{
 
 const initialChannels: ChannelItem[] = [
   {
+    databaseId: null,
     id: "chung",
     label: "chung",
     description: "Kênh trò chuyện chung của cộng đồng",
+    visibility: "public",
+    channelType: "text",
+    isLocked: false,
+    isSystem: true,
+    canManage: false,
   },
   {
+    databaseId: null,
     id: "gioi-thieu",
     label: "giới-thiệu",
     description: "Giới thiệu bản thân và làm quen với mọi người",
+    visibility: "public",
+    channelType: "text",
+    isLocked: false,
+    isSystem: true,
+    canManage: false,
   },
   {
+    databaseId: null,
     id: "gop-y",
     label: "góp-ý",
     description: "Đóng góp ý kiến để cộng đồng tốt hơn",
+    visibility: "public",
+    channelType: "text",
+    isLocked: false,
+    isSystem: true,
+    canManage: false,
   },
   {
+    databaseId: null,
     id: "tro-chuyen",
     label: "trò-chuyện",
     description: "Trò chuyện tự do cùng các thành viên",
+    visibility: "public",
+    channelType: "text",
+    isLocked: false,
+    isSystem: true,
+    canManage: false,
   },
 ];
+
+function isProtectedMainChannel(channel: ChannelItem) {
+  return channel.isSystem && channel.id === "chung";
+}
+
+const MAIN_VOICE_TAB_ID = "__main_voice_room__";
 
 const reactionChoices = ["👍", "❤️", "😂", "😮"];
 
@@ -436,8 +472,25 @@ export default function Home() {
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(
     {},
   );
+  const [openChannelMenuId, setOpenChannelMenuId] =
+    useState<string | null>(null);
+  const [editingChannel, setEditingChannel] =
+    useState<ChannelItem | null>(null);
+  const [deletingChannel, setDeletingChannel] =
+    useState<ChannelItem | null>(null);
+  const [managedChannelName, setManagedChannelName] =
+    useState("");
+  const [managedChannelDescription, setManagedChannelDescription] =
+    useState("");
+  const [channelManagementError, setChannelManagementError] =
+    useState("");
+  const [channelManagementWorking, setChannelManagementWorking] =
+    useState(false);
 
   const [selectedChannel, setSelectedChannel] = useState("chung");
+  const [openMainTabIds, setOpenMainTabIds] = useState<string[]>(
+    ["chung"],
+  );
   const [globalVoiceSelected, setGlobalVoiceSelected] =
     useState(false);
   const [globalVoiceJoinRequestId, setGlobalVoiceJoinRequestId] =
@@ -593,10 +646,51 @@ export default function Home() {
 
   const activeChannel = useMemo(
     () =>
-      channels.find((channel) => channel.id === selectedChannel) ??
-      channels[0],
+      channels.find(
+        (channel) => channel.id === selectedChannel,
+      ) ?? null,
     [channels, selectedChannel],
   );
+
+  const openMainTabs = useMemo(
+    () =>
+      openMainTabIds.flatMap((tabId) => {
+        if (tabId === MAIN_VOICE_TAB_ID) {
+          return [
+            {
+              id: MAIN_VOICE_TAB_ID,
+              label: "Phòng trò chuyện",
+              description:
+                "Kênh thoại chung của Talk Cùng Lâm DZ",
+              isVoice: true,
+            },
+          ];
+        }
+
+        const channel = channels.find(
+          (item) => item.id === tabId,
+        );
+        return channel
+          ? [
+              {
+                id: channel.id,
+                label: channel.label,
+                description: channel.description,
+                isVoice: false,
+              },
+            ]
+          : [];
+      }),
+    [channels, openMainTabIds],
+  );
+
+  const activeMainTabId =
+    globalVoiceSelected &&
+    openMainTabIds.includes(MAIN_VOICE_TAB_ID)
+      ? MAIN_VOICE_TAB_ID
+      : openMainTabIds.includes(selectedChannel)
+        ? selectedChannel
+        : null;
 
   const handleGlobalVoiceParticipants = useCallback(
     (
@@ -1285,42 +1379,71 @@ export default function Home() {
   }, []);
 
 
-  // Tải danh sách kênh từ database và đồng bộ theo thời gian thực.
+  const loadGlobalChannels = useCallback(async () => {
+    const { data, error } = await supabase.rpc(
+      "get_visible_channels",
+    );
+
+    if (error) {
+      setErrorMessage(
+        `Không thể tải danh sách kênh: ${error.message}`,
+      );
+      return;
+    }
+
+    const loadedChannels: ChannelItem[] = (
+      (data ?? []) as Array<{
+        id: string;
+        slug: string;
+        name: string;
+        description: string | null;
+        visibility: "public" | "private";
+        channel_type: "text" | "voice" | "both";
+        is_locked: boolean;
+        is_system: boolean;
+        can_manage: boolean;
+        server_id: string | null;
+      }>
+    )
+      .filter(
+        (channel) =>
+          channel.server_id === null &&
+          channel.channel_type !== "voice",
+      )
+      .map((channel) => ({
+        databaseId: channel.id,
+        id: channel.slug,
+        label: channel.name,
+        description: channel.description ?? "",
+        visibility: channel.visibility,
+        channelType: channel.channel_type,
+        isLocked: channel.is_locked,
+        isSystem: channel.is_system,
+        canManage: channel.can_manage,
+      }));
+
+    if (loadedChannels.length > 0) {
+      setChannels(loadedChannels);
+      setOpenMainTabIds((current) =>
+        current.filter(
+          (tabId) =>
+            tabId === MAIN_VOICE_TAB_ID ||
+            loadedChannels.some(
+              (channel) => channel.id === tabId,
+            ),
+        ),
+      );
+    }
+  }, []);
+
+  // Tải đúng các kênh thuộc khu vực chính và đồng bộ theo thời gian thực.
   useEffect(() => {
     if (!userId) return;
 
-    let active = true;
-
-    async function loadChannels() {
-      const { data, error } = await supabase
-        .from("channels")
-        .select("slug, name, description, position")
-        .order("position", { ascending: true })
-        .order("created_at", { ascending: true });
-
-      if (!active) return;
-
-      if (error) {
-        setErrorMessage(
-          `Không thể tải danh sách kênh: ${error.message}`,
-        );
-        return;
-      }
-
-      const loadedChannels: ChannelItem[] = (data ?? []).map(
-        (channel) => ({
-          id: channel.slug,
-          label: channel.name,
-          description: channel.description,
-        }),
-      );
-
-      if (loadedChannels.length > 0) {
-        setChannels(loadedChannels);
-      }
-    }
-
-    void loadChannels();
+    const initialTimer = window.setTimeout(
+      () => void loadGlobalChannels(),
+      0,
+    );
 
     const channelListSubscription = supabase
       .channel(`channel-list-${userId}`)
@@ -1332,16 +1455,16 @@ export default function Home() {
           table: "channels",
         },
         () => {
-          void loadChannels();
+          void loadGlobalChannels();
         },
       )
       .subscribe();
 
     return () => {
-      active = false;
+      window.clearTimeout(initialTimer);
       void supabase.removeChannel(channelListSubscription);
     };
-  }, [userId]);
+  }, [loadGlobalChannels, userId]);
 
   useEffect(() => {
     if (
@@ -1351,7 +1474,13 @@ export default function Home() {
       )
     ) {
       const timer = window.setTimeout(() => {
-        setSelectedChannel(channels[0].id);
+        const fallbackChannelId = channels[0].id;
+        setSelectedChannel(fallbackChannelId);
+        setOpenMainTabIds((current) =>
+          current.includes(fallbackChannelId)
+            ? current
+            : [...current, fallbackChannelId],
+        );
       }, 0);
 
       return () => window.clearTimeout(timer);
@@ -1644,10 +1773,166 @@ export default function Home() {
   }
 
   function selectChannel(channelId: string) {
+    setOpenMainTabIds((current) =>
+      current.includes(channelId)
+        ? current
+        : [...current, channelId],
+    );
     setSelectedChannel(channelId);
     setGlobalVoiceSelected(false);
     setShowChannels(false);
     setShowComposerEmojiPicker(false);
+    setOpenChannelMenuId(null);
+  }
+
+  function selectMainVoiceChannel() {
+    setOpenMainTabIds((current) =>
+      current.includes(MAIN_VOICE_TAB_ID)
+        ? current
+        : [...current, MAIN_VOICE_TAB_ID],
+    );
+    setGlobalVoiceSelected(true);
+    setGlobalVoiceActive(true);
+    setGlobalVoiceJoinRequestId((current) => current + 1);
+    setShowChannels(false);
+  }
+
+  function activateMainTab(tabId: string) {
+    if (tabId === MAIN_VOICE_TAB_ID) {
+      setGlobalVoiceSelected(true);
+      if (!globalVoiceActive) {
+        setGlobalVoiceActive(true);
+        setGlobalVoiceJoinRequestId(
+          (current) => current + 1,
+        );
+      }
+      return;
+    }
+
+    selectChannel(tabId);
+  }
+
+  function closeMainTab(tabId: string) {
+    const closedIndex = openMainTabIds.indexOf(tabId);
+    if (closedIndex < 0) return;
+
+    const nextOpenTabIds = openMainTabIds.filter(
+      (openTabId) => openTabId !== tabId,
+    );
+    setOpenMainTabIds(nextOpenTabIds);
+
+    if (activeMainTabId !== tabId) return;
+
+    const nextTabId =
+      nextOpenTabIds[
+        Math.min(closedIndex, nextOpenTabIds.length - 1)
+      ] ?? null;
+
+    if (nextTabId === MAIN_VOICE_TAB_ID) {
+      setGlobalVoiceSelected(true);
+      if (!globalVoiceActive) {
+        setGlobalVoiceActive(true);
+        setGlobalVoiceJoinRequestId(
+          (current) => current + 1,
+        );
+      }
+    } else {
+      setGlobalVoiceSelected(false);
+      if (nextTabId) setSelectedChannel(nextTabId);
+    }
+  }
+
+  function openEditChannel(channel: ChannelItem) {
+    if (!channel.canManage || !channel.databaseId) return;
+
+    setEditingChannel(channel);
+    setManagedChannelName(channel.label);
+    setManagedChannelDescription(channel.description);
+    setChannelManagementError("");
+    setOpenChannelMenuId(null);
+  }
+
+  async function saveChannelChanges() {
+    if (
+      !editingChannel?.databaseId ||
+      channelManagementWorking
+    ) {
+      return;
+    }
+
+    const nextName = managedChannelName.trim();
+    if (nextName.length < 2 || nextName.length > 40) {
+      setChannelManagementError(
+        "Tên kênh phải có từ 2 đến 40 ký tự.",
+      );
+      return;
+    }
+
+    setChannelManagementWorking(true);
+    setChannelManagementError("");
+
+    const { error } = await supabase.rpc("update_channel", {
+      p_channel_id: editingChannel.databaseId,
+      p_name: nextName,
+      p_description: managedChannelDescription.trim(),
+      p_channel_type: editingChannel.channelType,
+      p_visibility: editingChannel.visibility,
+      p_is_locked: editingChannel.isLocked,
+    });
+
+    if (error) {
+      setChannelManagementError(error.message);
+      setChannelManagementWorking(false);
+      return;
+    }
+
+    setChannels((current) =>
+      current.map((channel) =>
+        channel.databaseId === editingChannel.databaseId
+          ? {
+              ...channel,
+              label: nextName,
+              description: managedChannelDescription.trim(),
+            }
+          : channel,
+      ),
+    );
+    setEditingChannel(null);
+    setChannelManagementWorking(false);
+  }
+
+  async function deleteManagedChannel() {
+    if (
+      !deletingChannel?.databaseId ||
+      isProtectedMainChannel(deletingChannel) ||
+      channelManagementWorking
+    ) {
+      return;
+    }
+
+    setChannelManagementWorking(true);
+    setChannelManagementError("");
+
+    const { error } = await supabase.rpc("delete_channel", {
+      p_channel_id: deletingChannel.databaseId,
+    });
+
+    if (error) {
+      setChannelManagementError(error.message);
+      setChannelManagementWorking(false);
+      return;
+    }
+
+    closeMainTab(deletingChannel.id);
+    setChannels((current) =>
+      current.filter(
+        (channel) =>
+          channel.databaseId !== deletingChannel.databaseId,
+      ),
+    );
+
+    setDeletingChannel(null);
+    setChannelManagementWorking(false);
   }
 
   function validatePublicAttachment(
@@ -2494,7 +2779,6 @@ export default function Home() {
         <div className="flex-1 overflow-y-auto p-3">
           <div className="mb-2 flex items-center justify-between text-xs font-bold uppercase text-gray-400">
             <span>Kênh văn bản</span>
-            <span>+</span>
           </div>
 
           <nav className="space-y-1">
@@ -2503,27 +2787,79 @@ export default function Home() {
               const unread = unreadCounts[channel.id] ?? 0;
 
               return (
-                <button
+                <div
                   key={channel.id}
-                  type="button"
-                  onClick={() => selectChannel(channel.id)}
-                  className={`flex w-full items-center gap-2 rounded px-2 py-2 text-left ${
+                  className={`relative flex w-full items-center rounded ${
                     isSelected
                       ? "bg-white/10 text-white"
                       : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
                   }`}
                 >
-                  <span className="text-xl text-gray-400">#</span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {channel.label}
-                  </span>
-
-                  {unread > 0 && (
-                    <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold text-white">
-                      {unread > 99 ? "99+" : unread}
+                  <button
+                    type="button"
+                    onClick={() => selectChannel(channel.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left"
+                  >
+                    <span className="text-xl text-gray-400">#</span>
+                    <span className="min-w-0 flex-1 truncate">
+                      {channel.label}
                     </span>
+
+                    {unread > 0 && (
+                      <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold text-white">
+                        {unread > 99 ? "99+" : unread}
+                      </span>
+                    )}
+                  </button>
+
+                  {channel.canManage && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenChannelMenuId((current) =>
+                          current === channel.id
+                            ? null
+                            : channel.id,
+                        )
+                      }
+                      aria-label={`Quản lý kênh ${channel.label}`}
+                      title="Sửa hoặc xóa kênh"
+                      className="mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded text-lg font-black text-gray-400 hover:bg-white/10 hover:text-white"
+                    >
+                      ⋮
+                    </button>
                   )}
-                </button>
+
+                  {openChannelMenuId === channel.id && (
+                    <div className="absolute right-1 top-9 z-30 w-40 rounded-xl border border-white/10 bg-[#111214] p-1.5 text-sm text-white shadow-2xl">
+                      <button
+                        type="button"
+                        onClick={() => openEditChannel(channel)}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-indigo-500"
+                      >
+                        ✏️ Sửa kênh
+                      </button>
+
+                      {isProtectedMainChannel(channel) ? (
+                        <p className="px-3 py-2 text-xs text-gray-500">
+                          #chung mặc định không thể xóa
+                        </p>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeletingChannel(channel);
+                            setChannelManagementError("");
+                            setOpenChannelMenuId(null);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-red-300 hover:bg-red-500 hover:text-white"
+                        >
+                          🗑️ Xóa kênh
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </nav>
@@ -2559,14 +2895,7 @@ export default function Home() {
 
           <button
             type="button"
-            onClick={() => {
-              setGlobalVoiceSelected(true);
-              setGlobalVoiceActive(true);
-              setGlobalVoiceJoinRequestId(
-                (current) => current + 1,
-              );
-              setShowChannels(false);
-            }}
+            onClick={selectMainVoiceChannel}
             className={`flex w-full items-center gap-2 rounded px-2 py-2 text-left ${
               globalVoiceSelected
                 ? "bg-white/10 text-white"
@@ -2696,45 +3025,85 @@ export default function Home() {
 
       {/* Chat */}
       <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-        <header className="flex h-[57px] shrink-0 items-center gap-3 border-b border-black/20 px-3 shadow md:px-4">
+        <header className="flex h-[58px] shrink-0 items-end gap-2 border-b border-black/30 bg-[#202225] px-2 pt-2 shadow">
           <button
             type="button"
             onClick={() => setShowChannels(true)}
-            className="rounded p-1 text-xl text-gray-300 md:hidden"
+            className="mb-1.5 rounded p-2 text-xl text-gray-300 md:hidden"
+            aria-label="Mở danh sách kênh"
           >
             ☰
           </button>
 
-          <span className="text-2xl text-gray-400">
-            {globalVoiceSelected ? "🔊" : "#"}
-          </span>
-          <strong>
-            {globalVoiceSelected
-              ? "Phòng trò chuyện"
-              : activeChannel.label}
-          </strong>
+          <div
+            role="tablist"
+            aria-label="Các kênh chính đang mở"
+            className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto [scrollbar-width:thin]"
+          >
+            {openMainTabs.length === 0 && (
+              <span className="mb-3 px-3 text-sm text-gray-500">
+                Bấm một kênh bên trái để mở tab
+              </span>
+            )}
 
-          <span className="hidden min-w-0 flex-1 truncate text-sm text-gray-400 sm:block">
-            {globalVoiceSelected
-              ? "Kênh thoại chung của Talk Cùng Lâm DZ"
-              : activeChannel.description}
-          </span>
+            {openMainTabs.map((tab) => {
+              const active = activeMainTabId === tab.id;
 
-          {!globalVoiceSelected && (
+              return (
+                <div
+                  key={tab.id}
+                  role="tab"
+                  aria-selected={active}
+                  className={`group flex h-11 min-w-[132px] max-w-[220px] shrink-0 items-center overflow-hidden rounded-t-xl border border-b-0 transition ${
+                    active
+                      ? "border-black/20 bg-[#313338] text-white"
+                      : "border-white/5 bg-[#2b2d31] text-gray-400 hover:bg-[#35373c] hover:text-gray-200"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => activateMainTab(tab.id)}
+                    title={tab.label}
+                    className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 text-left"
+                  >
+                    <span className="shrink-0 text-sm">
+                      {tab.isVoice ? "🔊" : "#"}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-bold">
+                      {tab.label}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => closeMainTab(tab.id)}
+                    aria-label={`Đóng tab ${tab.label}`}
+                    title="Đóng tab"
+                    className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-lg text-gray-400 hover:bg-white/10 hover:text-white"
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          {activeMainTabId &&
+            activeMainTabId !== MAIN_VOICE_TAB_ID && (
             <input
               value={searchQuery}
               onChange={(event) =>
                 setSearchQuery(event.target.value)
               }
               placeholder="Tìm tin nhắn"
-              className="ml-auto hidden w-40 rounded bg-[#1e1f22] px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-indigo-500 sm:block"
+              className="mb-1.5 hidden w-36 shrink-0 rounded bg-[#111214] px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500 sm:block"
             />
           )}
 
           <button
             type="button"
             onClick={() => setShowMembers(true)}
-            className="rounded p-1 text-xl text-gray-300 lg:hidden"
+            className="mb-1.5 rounded p-2 text-xl text-gray-300 lg:hidden"
+            aria-label="Mở danh sách thành viên"
           >
             👥
           </button>
@@ -2764,7 +3133,21 @@ export default function Home() {
           </div>
         )}
 
-        {!globalVoiceSelected && (
+        {!globalVoiceSelected && !activeMainTabId && (
+          <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-gray-400">
+            <div>
+              <div className="text-5xl">🗂️</div>
+              <p className="mt-3">
+                Chưa có tab nào đang mở. Hãy bấm một kênh ở cột
+                bên trái.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!globalVoiceSelected &&
+          activeMainTabId &&
+          activeChannel && (
           <>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-5 [scrollbar-gutter:stable] md:px-5">
           <div className="mb-8">
@@ -3789,6 +4172,160 @@ export default function Home() {
           </>
         )}
       </aside>
+
+      {editingChannel && (
+        <div
+          className="fixed inset-0 z-[190] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Sửa kênh ${editingChannel.label}`}
+        >
+          <section className="w-full max-w-md rounded-3xl border border-white/10 bg-[#24262b] p-6 text-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-black">
+                  Sửa kênh văn bản
+                </h2>
+                <p className="mt-1 text-sm text-gray-400">
+                  Thay đổi tên và mô tả của kênh chính.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingChannel(null);
+                  setChannelManagementError("");
+                }}
+                disabled={channelManagementWorking}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xl disabled:opacity-50"
+                aria-label="Đóng"
+              >
+                ×
+              </button>
+            </div>
+
+            {channelManagementError && (
+              <p className="mt-4 rounded-xl bg-red-500/15 px-4 py-3 text-sm text-red-300">
+                {channelManagementError}
+              </p>
+            )}
+
+            <div className="mt-5 space-y-4">
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase text-gray-400">
+                  Tên kênh
+                </span>
+                <div className="flex items-center rounded-xl bg-[#1e1f22] px-4 focus-within:ring-2 focus-within:ring-indigo-500">
+                  <span className="text-xl text-gray-500">#</span>
+                  <input
+                    value={managedChannelName}
+                    onChange={(event) =>
+                      setManagedChannelName(event.target.value)
+                    }
+                    maxLength={40}
+                    className="min-w-0 flex-1 bg-transparent px-2 py-3 outline-none"
+                    autoFocus
+                  />
+                </div>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase text-gray-400">
+                  Mô tả
+                </span>
+                <textarea
+                  value={managedChannelDescription}
+                  onChange={(event) =>
+                    setManagedChannelDescription(
+                      event.target.value,
+                    )
+                  }
+                  maxLength={300}
+                  rows={3}
+                  placeholder="Mô tả kênh"
+                  className="w-full resize-none rounded-xl bg-[#1e1f22] px-4 py-3 outline-none ring-indigo-500 focus:ring-2"
+                />
+              </label>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingChannel(null);
+                  setChannelManagementError("");
+                }}
+                disabled={channelManagementWorking}
+                className="flex-1 rounded-xl bg-white/10 px-4 py-3 font-bold disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveChannelChanges()}
+                disabled={
+                  channelManagementWorking ||
+                  managedChannelName.trim().length < 2
+                }
+                className="flex-1 rounded-xl bg-indigo-500 px-4 py-3 font-black disabled:opacity-50"
+              >
+                {channelManagementWorking
+                  ? "Đang lưu..."
+                  : "Lưu thay đổi"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {deletingChannel && (
+        <div
+          className="fixed inset-0 z-[190] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Xóa kênh ${deletingChannel.label}`}
+        >
+          <section className="w-full max-w-md rounded-3xl border border-red-400/20 bg-[#24262b] p-6 text-white shadow-2xl">
+            <h2 className="text-xl font-black text-red-300">
+              Xóa #{deletingChannel.label}?
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-gray-300">
+              Kênh và dữ liệu gắn với kênh sẽ bị xóa. Thao tác
+              này không thể hoàn tác.
+            </p>
+
+            {channelManagementError && (
+              <p className="mt-4 rounded-xl bg-red-500/15 px-4 py-3 text-sm text-red-300">
+                {channelManagementError}
+              </p>
+            )}
+
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletingChannel(null);
+                  setChannelManagementError("");
+                }}
+                disabled={channelManagementWorking}
+                className="flex-1 rounded-xl bg-white/10 px-4 py-3 font-bold disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={() => void deleteManagedChannel()}
+                disabled={channelManagementWorking}
+                className="flex-1 rounded-xl bg-red-600 px-4 py-3 font-black hover:bg-red-500 disabled:opacity-50"
+              >
+                {channelManagementWorking
+                  ? "Đang xóa..."
+                  : "Xóa kênh"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {reportingMessage && (
         <div

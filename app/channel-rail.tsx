@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import {
@@ -649,7 +650,14 @@ export default function ChannelRail({
               : "bg-[#313338] hover:bg-indigo-500"
           }`}
         >
-          T
+          <Image
+            src="/pwa-192.png"
+            alt="Logo Talk Cùng Lâm DZ"
+            width={48}
+            height={48}
+            priority
+            className="h-12 w-12 rounded-[inherit] object-cover"
+          />
         </button>
 
         <div className="h-px w-9 shrink-0 bg-white/10" />
