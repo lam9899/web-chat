@@ -681,6 +681,9 @@ export default function MiniGolf3DView({
   onAimMove,
   onAimEnd,
   onAimCancel,
+  holeCount,
+  holeStrokes,
+  maxHoleStrokes,
 }: {
   course: MiniGolfCourse;
   viewedHole: number;
@@ -696,6 +699,9 @@ export default function MiniGolf3DView({
   onAimMove: (point: MiniGolfPoint) => void;
   onAimEnd: (point: MiniGolfPoint) => void;
   onAimCancel: () => void;
+  holeCount: number;
+  holeStrokes: number | null;
+  maxHoleStrokes: number;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const cameraControllerRef = useRef<CameraController | null>(null);
@@ -2390,11 +2396,15 @@ export default function MiniGolf3DView({
       <div
         ref={mountRef}
         className="absolute inset-0"
-        aria-label={`Sân Mini Golf 3D góc nhìn thứ ba, hố ${viewedHole}: ${course.name}`}
+        aria-label={`Màn chơi Mini Golf, hố ${viewedHole}/${holeCount}: ${course.name}`}
       />
 
       <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-full border border-cyan-200/20 bg-slate-950/72 px-3 py-1.5 text-[11px] font-black text-cyan-100 shadow-lg backdrop-blur-md">
-        🎥 GÓC NHÌN THỨ 3
+        🎮 MÀN CHƠI · HỐ {viewedHole}/{holeCount} ·{" "}
+        {holeStrokes === null
+          ? `—/${maxHoleStrokes}`
+          : `${holeStrokes}/${maxHoleStrokes}`}{" "}
+        GẬY
       </div>
 
       <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex items-end gap-2">

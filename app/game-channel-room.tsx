@@ -668,102 +668,6 @@ export default function GameChannelRoom({
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
-      <header className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-[#202225] p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">
-              {summary?.game_icon ?? "🎮"}
-            </span>
-            <h1 className="truncate text-xl font-black">
-              {summary?.game_name ?? channelName}
-            </h1>
-          </div>
-          <p className="mt-1 text-sm text-gray-400">
-            {channelName} · {playerCount}/
-            {maximumPlayers ?? "—"} người
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setShowGamePicker(true)}
-            disabled={working || isRoomLocked}
-            title={
-              isRoomLocked
-                ? "Không thể đổi game khi trận đang diễn ra"
-                : "Mở thư viện game"
-            }
-            className="rounded-xl bg-indigo-500 px-4 py-2.5 font-black text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            🎮 Chọn game
-          </button>
-
-          {currentPlayer && (
-            <>
-              {isRoomHost &&
-                (isRoomLocked ? (
-                  <button
-                    type="button"
-                    onClick={() => void stopGame()}
-                    disabled={working}
-                    title="Dừng trận và mở lại phòng chờ"
-                    className="rounded-xl bg-red-600 px-4 py-2.5 font-black text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {working ? "Đang dừng..." : "■ Dừng game"}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => void startGame()}
-                    disabled={working || !canStartGame}
-                    title={
-                      !guestPlayers.every(
-                        (player) => player.is_ready,
-                      )
-                        ? "Tất cả người chơi khác phải sẵn sàng"
-                        : "Bắt đầu trò chơi"
-                    }
-                    className="rounded-xl bg-amber-500 px-4 py-2.5 font-black text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    ▶ Bắt đầu trò chơi
-                  </button>
-                ))}
-              {!isRoomHost && !isRoomLocked && (
-                <button
-                  type="button"
-                  onClick={() => void toggleReady()}
-                  disabled={working}
-                  className={`rounded-xl px-4 py-2.5 font-black disabled:opacity-50 ${
-                    currentPlayer.is_ready
-                      ? "bg-green-600 hover:bg-green-500"
-                      : "bg-indigo-500 hover:bg-indigo-400"
-                  }`}
-                >
-                  {currentPlayer.is_ready
-                    ? "✓ Đã sẵn sàng"
-                    : "Sẵn sàng"}
-                </button>
-              )}
-              {isRoomLocked ? (
-                <span className="rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-2.5 font-black text-amber-200">
-                  🔒 Phòng đã khóa
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => void leaveGame()}
-                  disabled={working}
-                  className="rounded-xl bg-red-500/15 px-4 py-2.5 font-bold text-red-300 hover:bg-red-500/25 disabled:opacity-50"
-                >
-                  Rời phòng
-                </button>
-              )}
-            </>
-          )}
-        </div>
-      </header>
-
       {errorMessage && (
         <p className="rounded-xl bg-red-500/15 px-4 py-3 text-sm text-red-300">
           {errorMessage}
@@ -834,16 +738,9 @@ export default function GameChannelRoom({
                 </h2>
                 <p className="mx-auto mt-3 max-w-md text-gray-400">
                   {canManage
-                    ? "Bấm Chọn game để mở thư viện và chọn trò chơi cho kênh này."
+                    ? "Bấm Chọn game ở thanh bên dưới để mở thư viện."
                     : "Bạn có thể xem thư viện game; chủ server hoặc quản lý sẽ chọn game cho kênh."}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setShowGamePicker(true)}
-                  className="mt-6 rounded-xl bg-indigo-500 px-5 py-3 font-black hover:bg-indigo-400"
-                >
-                  🎮 Chọn game
-                </button>
               </div>
             </div>
           )}
@@ -851,22 +748,118 @@ export default function GameChannelRoom({
 
       </div>
 
+      <section
+        aria-label="Điều khiển phòng game"
+        className="flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#202225] px-3 py-2"
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="shrink-0 text-lg">
+            {summary?.game_icon ?? "🎮"}
+          </span>
+          <h1 className="truncate text-sm font-black">
+            {summary?.game_name ?? channelName}
+          </h1>
+          <span className="truncate text-[11px] text-gray-400">
+            {channelName}
+          </span>
+          <span className="shrink-0 rounded-full bg-green-500/15 px-2 py-1 text-[10px] font-black text-green-300">
+            {playerCount}/{maximumPlayers ?? "—"} người
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <button
+            type="button"
+            onClick={() => setShowGamePicker(true)}
+            disabled={working || isRoomLocked}
+            title={
+              isRoomLocked
+                ? "Không thể đổi game khi trận đang diễn ra"
+                : "Mở thư viện game"
+            }
+            className="rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-black text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            🎮 Chọn game
+          </button>
+
+          {currentPlayer && (
+            <>
+              {isRoomHost &&
+                (isRoomLocked ? (
+                  <button
+                    type="button"
+                    onClick={() => void stopGame()}
+                    disabled={working}
+                    title="Dừng trận và mở lại phòng chờ"
+                    className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-black text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {working ? "Đang dừng..." : "■ Dừng game"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void startGame()}
+                    disabled={working || !canStartGame}
+                    title={
+                      !guestPlayers.every(
+                        (player) => player.is_ready,
+                      )
+                        ? "Tất cả người chơi khác phải sẵn sàng"
+                        : "Bắt đầu trò chơi"
+                    }
+                    className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-black text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    ▶ Bắt đầu
+                  </button>
+                ))}
+              {!isRoomHost && !isRoomLocked && (
+                <button
+                  type="button"
+                  onClick={() => void toggleReady()}
+                  disabled={working}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-black disabled:opacity-50 ${
+                    currentPlayer.is_ready
+                      ? "bg-green-600 hover:bg-green-500"
+                      : "bg-indigo-500 hover:bg-indigo-400"
+                  }`}
+                >
+                  {currentPlayer.is_ready
+                    ? "✓ Đã sẵn sàng"
+                    : "Sẵn sàng"}
+                </button>
+              )}
+              {isRoomLocked ? (
+                <span className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-3 py-1.5 text-xs font-black text-amber-200">
+                  🔒 Phòng đã khóa
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void leaveGame()}
+                  disabled={working}
+                  className="rounded-lg bg-red-500/15 px-3 py-1.5 text-xs font-bold text-red-300 hover:bg-red-500/25 disabled:opacity-50"
+                >
+                  Rời phòng
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </section>
+
       {selectedGame && maximumPlayers !== null && (
-        <section className="rounded-2xl border border-white/10 bg-[#202225] p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-black">
-                {selectedGame.icon} Phòng chờ{" "}
-                {selectedGame.name}
-              </h2>
-              <p className="mt-1 text-xs text-gray-400">
-                {isRoomLocked
-                  ? "🔒 Trận đang diễn ra · Danh sách người chơi được giữ nguyên cho đến khi kết thúc"
-                  : "Ô số 1 là chủ phòng · Bấm dấu + để tham gia hoặc mời bạn bè"}
-              </p>
-            </div>
+        <section className="rounded-xl border border-white/10 bg-[#202225] p-2.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="shrink-0 text-sm font-black">
+              {selectedGame.icon} Phòng chờ
+            </h2>
+            <p className="min-w-0 flex-1 truncate text-[10px] text-gray-400">
+              {isRoomLocked
+                ? "🔒 Đang thi đấu · Giữ nguyên người chơi"
+                : "Ô 1 là chủ phòng · Bấm + để vào hoặc mời bạn"}
+            </p>
             <span
-              className={`rounded-full px-3 py-1 text-xs font-black ${
+              className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black ${
                 isRoomLocked
                   ? "bg-amber-500/15 text-amber-200"
                   : "bg-green-500/15 text-green-300"
@@ -877,7 +870,7 @@ export default function GameChannelRoom({
             </span>
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
+          <div className="mt-2 grid auto-cols-[74px] grid-flow-col gap-1.5 overflow-x-auto pb-1 [scrollbar-width:thin]">
             {Array.from(
               { length: maximumPlayers },
               (_, seatIndex) => {
@@ -892,7 +885,16 @@ export default function GameChannelRoom({
                   return (
                     <div
                       key={seatIndex}
-                      className={`relative flex min-h-32 flex-col items-center justify-center rounded-2xl border p-3 text-center ${
+                      title={`${player.username} · ${
+                        isRoomLocked
+                          ? "Đang thi đấu"
+                          : seatIndex === 0
+                            ? "Chủ phòng"
+                            : player.is_ready
+                              ? "Đã sẵn sàng"
+                              : "Chưa sẵn sàng"
+                      }`}
+                      className={`relative flex h-[78px] flex-col items-center justify-center rounded-xl border p-1 text-center ${
                         seatIndex === 0
                           ? "border-amber-400/70 bg-amber-500/10"
                           : "border-white/10 bg-[#2b2d31]"
@@ -901,12 +903,12 @@ export default function GameChannelRoom({
                       {seatIndex === 0 && (
                         <span
                           title="Chủ phòng"
-                          className="absolute left-2 top-2 text-lg"
+                          className="absolute left-1 top-1 text-[10px]"
                         >
                           👑
                         </span>
                       )}
-                      <span className="absolute right-2 top-2 text-[10px] font-black text-gray-500">
+                      <span className="absolute right-1 top-1 text-[8px] font-black text-gray-500">
                         {seatIndex + 1}
                       </span>
 
@@ -914,33 +916,33 @@ export default function GameChannelRoom({
                         <img
                           src={player.avatar_url}
                           alt={player.username}
-                          className="h-12 w-12 rounded-full object-cover ring-2 ring-white/10"
+                          className="h-8 w-8 rounded-full object-cover ring-2 ring-white/10"
                         />
                       ) : (
-                        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-500 text-lg font-black">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-500 text-xs font-black">
                           {player.username
                             .charAt(0)
                             .toUpperCase()}
                         </span>
                       )}
 
-                      <span className="mt-2 max-w-full truncate text-xs font-black">
+                      <span className="mt-1 w-full truncate px-0.5 text-[9px] font-black">
                         {player.username}
                       </span>
                       <span
-                        className={`mt-1 text-[10px] font-bold ${
+                        className={`text-[8px] font-bold ${
                           isRoomLocked || player.is_ready
                             ? "text-green-300"
                             : "text-gray-500"
                         }`}
                       >
                         {isRoomLocked
-                          ? "Đang thi đấu"
+                          ? "Thi đấu"
                           : seatIndex === 0
                             ? "Chủ phòng"
                           : player.is_ready
-                            ? "Đã sẵn sàng"
-                            : "Chưa sẵn sàng"}
+                            ? "Sẵn sàng"
+                            : "Chờ"}
                       </span>
                     </div>
                   );
@@ -953,43 +955,42 @@ export default function GameChannelRoom({
                   return (
                     <div
                       key={seatIndex}
-                      className="relative flex min-h-32 flex-col items-center justify-center rounded-2xl border border-dashed border-indigo-400/50 bg-indigo-500/10 p-3 text-center"
+                      title={`${invite.username} · Đã được mời`}
+                      className="relative flex h-[78px] flex-col items-center justify-center rounded-xl border border-dashed border-indigo-400/50 bg-indigo-500/10 p-1 text-center"
                     >
-                      <span className="absolute right-2 top-2 text-[10px] font-black text-gray-500">
+                      <span className="absolute right-1 top-1 text-[8px] font-black text-gray-500">
                         {seatIndex + 1}
                       </span>
                       {invite.avatar_url ? (
                         <img
                           src={invite.avatar_url}
                           alt={invite.username}
-                          className="h-10 w-10 rounded-full object-cover opacity-70"
+                          className="h-7 w-7 rounded-full object-cover opacity-70"
                         />
                       ) : (
-                        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-500/60 text-sm font-black">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-500/60 text-[10px] font-black">
                           {invite.username
                             .charAt(0)
                             .toUpperCase()}
                         </span>
                       )}
-                      <span className="mt-2 max-w-full truncate text-[11px] font-bold text-indigo-200">
+                      <span className="mt-1 w-full truncate px-0.5 text-[8px] font-bold text-indigo-200">
                         {invite.username}
                       </span>
-                      <span className="mt-1 text-[9px] text-gray-400">
-                        Đã được mời
-                      </span>
+                      <span className="text-[7px] text-gray-400">Đã mời</span>
 
                       {isMyInvite && !isRoomLocked && (
-                        <span className="mt-2 flex gap-1">
+                        <span className="mt-0.5 flex gap-0.5">
                           <button
                             type="button"
                             onClick={() =>
                               void respondToInvite(
                                 invite.invite_id,
                                 true,
-                              )
+                            )
                             }
                             disabled={working}
-                            className="rounded-lg bg-green-600 px-2 py-1 text-[9px] font-black hover:bg-green-500"
+                            className="rounded bg-green-600 px-1 py-0.5 text-[7px] font-black hover:bg-green-500"
                           >
                             Vào
                           </button>
@@ -999,12 +1000,12 @@ export default function GameChannelRoom({
                               void respondToInvite(
                                 invite.invite_id,
                                 false,
-                              )
+                            )
                             }
                             disabled={working}
-                            className="rounded-lg bg-white/10 px-2 py-1 text-[9px] font-black hover:bg-white/15"
+                            className="rounded bg-white/10 px-1 py-0.5 text-[7px] font-black hover:bg-white/15"
                           >
-                            Từ chối
+                            Bỏ
                           </button>
                         </span>
                       )}
@@ -1023,16 +1024,13 @@ export default function GameChannelRoom({
                     }}
                     disabled={working || isRoomLocked}
                     title={`Ô chờ ${seatIndex + 1}`}
-                    className="group relative flex min-h-32 flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 bg-[#2b2d31]/60 p-3 transition hover:border-indigo-400 hover:bg-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="group relative flex h-[78px] flex-col items-center justify-center rounded-xl border border-dashed border-white/15 bg-[#2b2d31]/60 p-1 transition hover:border-indigo-400 hover:bg-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <span className="absolute right-2 top-2 text-[10px] font-black text-gray-600">
+                    <span className="absolute right-1 top-1 text-[8px] font-black text-gray-600">
                       {seatIndex + 1}
                     </span>
-                    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/5 text-3xl text-gray-500 transition group-hover:bg-indigo-500 group-hover:text-white">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-lg text-gray-500 transition group-hover:bg-indigo-500 group-hover:text-white">
                       {isRoomLocked ? "🔒" : "+"}
-                    </span>
-                    <span className="mt-2 text-[10px] font-bold text-gray-500 group-hover:text-indigo-200">
-                      {isRoomLocked ? "Đã khóa" : "Ô trống"}
                     </span>
                   </button>
                 );

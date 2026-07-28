@@ -2370,27 +2370,25 @@ export default function MiniGolfGame({
       ref={gameSurfaceRef}
       className="w-full min-w-0 overflow-hidden bg-[#111827] text-white"
     >
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-[#0f172a] px-4 py-3">
-        <div>
-          <h2 className="font-black">
-            ⛳ {course.name}
-          </h2>
-          <p className="text-xs text-gray-400">
-            Hố {viewedHole}/{match.hole_count} · Par{" "}
+      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-white/10 bg-[#0f172a] px-3 py-2">
+        <h2 className="min-w-0 truncate text-sm font-black">
+          ⛳ {course.name}
+          <span className="ml-2 font-semibold text-gray-400">
+            · Hố {viewedHole}/{match.hole_count} · Par{" "}
             {course.par}
-          </p>
-        </div>
+          </span>
+        </h2>
         <div className="flex items-center gap-2">
           {currentPlayer?.player_status === "playing" && (
             <>
               {currentPlayerWaiting ? (
-                <span className="rounded-xl bg-emerald-500/20 px-3 py-2 text-sm font-black text-emerald-300">
+                <span className="whitespace-nowrap rounded-lg bg-emerald-500/20 px-2 py-1.5 text-xs font-black text-emerald-300">
                   ✓ Đã vào lỗ · Chờ{" "}
                   {waitingForPlayers.length} người
                 </span>
               ) : (
                 <span
-                  className={`rounded-xl px-3 py-2 text-sm font-black ${
+                  className={`whitespace-nowrap rounded-lg px-2 py-1.5 text-xs font-black ${
                     remainingSeconds <= 10
                       ? "bg-red-500 text-white"
                       : "bg-white/10 text-amber-300"
@@ -2399,7 +2397,7 @@ export default function MiniGolfGame({
                   ⏱ {remainingSeconds}s
                 </span>
               )}
-              <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-black">
+              <span className="whitespace-nowrap rounded-lg bg-white/10 px-2 py-1.5 text-xs font-black">
                 {currentPlayer.hole_strokes}/
                 {MAX_HOLE_STROKES} gậy
               </span>
@@ -2418,7 +2416,7 @@ export default function MiniGolfGame({
                 ? "Thoát toàn màn hình"
                 : "Mở toàn màn hình"
             }
-            className={`flex h-10 w-10 items-center justify-center rounded-xl transition ${
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition ${
               isFullscreen
                 ? "bg-red-500/20 text-red-200 hover:bg-red-500/35"
                 : "bg-white/10 hover:bg-white/15"
@@ -2451,6 +2449,9 @@ export default function MiniGolfGame({
           onAimMove={moveAimAt}
           onAimEnd={releaseAimAt}
           onAimCancel={cancelAim}
+          holeCount={match.hole_count}
+          holeStrokes={currentPlayer?.hole_strokes ?? null}
+          maxHoleStrokes={MAX_HOLE_STROKES}
         />
         <canvas
           ref={canvasRef}
