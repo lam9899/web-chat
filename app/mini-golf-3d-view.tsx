@@ -87,6 +87,12 @@ type BallObject = {
   >;
 };
 
+type ScenicOccluder = {
+  root: THREE.Group;
+  center: THREE.Vector3;
+  radius: number;
+};
+
 type CameraController = {
   resetBehindBall: () => void;
   rotate: (direction: -1 | 1) => void;
@@ -990,7 +996,7 @@ export default function MiniGolf3DView({
       roughness: 1,
     });
     const landscape = new THREE.Mesh(
-      new THREE.PlaneGeometry(50, 36),
+      new THREE.PlaneGeometry(80, 60),
       landscapeMaterial,
     );
     landscape.rotation.x = -Math.PI / 2;
@@ -1011,9 +1017,9 @@ export default function MiniGolf3DView({
     for (let hillIndex = 0; hillIndex < 16; hillIndex += 1) {
       const angle = (hillIndex / 16) * Math.PI * 2;
       const radius =
-        18 + seededNoise(hillIndex, course.id * 229.4) * 7;
+        31 + seededNoise(hillIndex, course.id * 229.4) * 11;
       const height =
-        3.4 + seededNoise(hillIndex, course.id * 233.7) * 5.2;
+        4.4 + seededNoise(hillIndex, course.id * 233.7) * 6.2;
       const hill = new THREE.Mesh(
         new THREE.ConeGeometry(
           3.2 + height * 0.45,
@@ -1527,16 +1533,27 @@ export default function MiniGolf3DView({
           flatShading: true,
         }),
     );
-    for (let index = 0; index < 26; index += 1) {
-      const side = index % 2 === 0 ? -1 : 1;
+    const scenicOccluders: ScenicOccluder[] = [];
+    const treeCount =
+      course.theme === "forest"
+        ? 18
+        : course.theme === "desert"
+          ? 8
+          : 12;
+    for (let index = 0; index < treeCount; index += 1) {
+      const angle =
+        (index / treeCount) * Math.PI * 2 +
+        (seededNoise(index, course.id * 109.3) - 0.5) * 0.18;
       const x =
-        side *
-        (10.4 + seededNoise(index, course.id * 113.7) * 4.6);
+        Math.sin(angle) *
+        (17.5 + seededNoise(index, course.id * 113.7) * 5.2);
       const z =
-        -9 +
-        seededNoise(index, course.id * 127.3) * 18;
+        Math.cos(angle) *
+        (12.5 + seededNoise(index, course.id * 127.3) * 4.5);
       const height =
-        1 + seededNoise(index, course.id * 131.9) * 1.8;
+        0.9 + seededNoise(index, course.id * 131.9) * 1.45;
+      const tree = new THREE.Group();
+      tree.position.set(x, 0, z);
       const trunk = new THREE.Mesh(
         new THREE.CylinderGeometry(
           0.08 + height * 0.018,
@@ -1546,11 +1563,12 @@ export default function MiniGolf3DView({
         ),
         treeTrunkMaterial,
       );
-      trunk.position.set(x, -0.25 + height / 2, z);
+      trunk.position.set(0, -0.25 + height / 2, 0);
       trunk.rotation.z =
         (seededNoise(index, course.id * 137.1) - 0.5) * 0.08;
+      trunk.castShadow = true;
       trunk.receiveShadow = true;
-      scene.add(trunk);
+      tree.add(trunk);
 
       for (let cluster = 0; cluster < 3; cluster += 1) {
         const crownRadius =
@@ -1568,11 +1586,10 @@ export default function MiniGolf3DView({
           0.92,
         );
         crown.position.set(
-          x + (cluster - 1) * crownRadius * 0.58,
+          (cluster - 1) * crownRadius * 0.58,
           -0.18 + height + (cluster % 2) * crownRadius * 0.42,
-          z +
-            (seededNoise(index + cluster, course.id * 143.8) - 0.5) *
-              crownRadius,
+          (seededNoise(index + cluster, course.id * 143.8) - 0.5) *
+            crownRadius,
         );
         crown.rotation.set(
           seededNoise(index, cluster + 1) * 0.3,
@@ -1580,9 +1597,20 @@ export default function MiniGolf3DView({
             Math.PI,
           0,
         );
+        crown.castShadow = true;
         crown.receiveShadow = true;
-        scene.add(crown);
+        tree.add(crown);
       }
+      scene.add(tree);
+      scenicOccluders.push({
+        root: tree,
+        center: new THREE.Vector3(
+          x,
+          height + 0.35,
+          z,
+        ),
+        radius: 1.05 + height * 0.34,
+      });
     }
 
     const bumpTexture = makeGolfBumpTexture(renderer);
@@ -1941,6 +1969,9 @@ export default function MiniGolf3DView({
     const desiredCameraPosition = new THREE.Vector3();
     const cameraFocus = new THREE.Vector3();
     const cameraLookAhead = new THREE.Vector3();
+    const occlusionDirection = new THREE.Vector3();
+    const occlusionOffset = new THREE.Vector3();
+    const occlusionClosestPoint = new THREE.Vector3();
     const animate = (time: number) => {
       const latest = dynamicRef.current;
       const elapsed = (time - startedAt) / 1000;
@@ -2226,6 +2257,41 @@ export default function MiniGolf3DView({
         1 - Math.exp(-frameDelta * 7.5),
       );
       camera.lookAt(cameraLookTarget);
+
+      occlusionDirection
+        .copy(cameraLookTarget)
+        .sub(camera.position);
+      const focusDistance = occlusionDirection.length();
+      if (focusDistance > 0.001) {
+        occlusionDirection.multiplyScalar(1 / focusDistance);
+        for (const occluder of scenicOccluders) {
+          occlusionOffset
+            .copy(occluder.center)
+            .sub(camera.position);
+          const distanceFromCamera = occlusionOffset.length();
+          const projection =
+            occlusionOffset.dot(occlusionDirection);
+          let blocksView = false;
+          if (projection > 0 && projection < focusDistance) {
+            occlusionClosestPoint
+              .copy(camera.position)
+              .addScaledVector(
+                occlusionDirection,
+                projection,
+              );
+            blocksView =
+              occlusionClosestPoint.distanceToSquared(
+                occluder.center,
+              ) <
+              (occluder.radius + 0.72) *
+                (occluder.radius + 0.72);
+          }
+          const cameraInsideTree =
+            distanceFromCamera < occluder.radius + 2.1;
+          occluder.root.visible =
+            !blocksView && !cameraInsideTree;
+        }
+      }
 
       const distanceToHole = Math.hypot(
         motion.x - course.hole.x,
