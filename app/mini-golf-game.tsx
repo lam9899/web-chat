@@ -10,6 +10,7 @@ import {
 import { createClient } from "@/utils/supabase/client";
 import MiniGolf3DView from "./mini-golf-3d-view";
 import {
+  getMiniGolfTerrainGradient,
   MINI_GOLF_COURSES,
   type MiniGolfCourse,
   type MiniGolfPoint,
@@ -190,6 +191,19 @@ function updateBallPhysics(
   course: MiniGolfCourse,
   deltaSeconds: number,
 ) {
+  const startedInSand = course.sand.some((rect) =>
+    pointInRect(ball.x, ball.y, rect),
+  );
+  const terrainGradient = getMiniGolfTerrainGradient(
+    { x: ball.x, y: ball.y },
+    course,
+  );
+  const slopeAcceleration = startedInSand ? 0.013 : 0.028;
+  ball.vx -=
+    terrainGradient.x * slopeAcceleration * deltaSeconds;
+  ball.vy -=
+    terrainGradient.y * slopeAcceleration * deltaSeconds;
+
   const speedBeforeMove = ballPixelSpeed(ball);
   ball.x += ball.vx * deltaSeconds;
   ball.y += ball.vy * deltaSeconds;
@@ -1911,10 +1925,11 @@ export default function MiniGolfGame({
 
     const rawPower = clamp(
       dragDistance / MAX_DRAG_DISTANCE,
-      0.08,
+      0.03,
       1,
     );
-    const responsivePower = Math.pow(rawPower, 0.68);
+    const responsivePower =
+      rawPower * rawPower * (3 - 2 * rawPower);
     const pixelSpeed = MAX_SHOT_SPEED * responsivePower;
     ball.vx =
       (directionX / dragDistance) *

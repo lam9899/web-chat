@@ -7,13 +7,14 @@ import {
 } from "react";
 import * as THREE from "three";
 import {
+  getMiniGolfTerrainElevation,
   type MiniGolfCourse,
   type MiniGolfPoint,
   type MiniGolfRect,
 } from "./mini-golf-courses";
 
-const WORLD_WIDTH = 18;
-const WORLD_DEPTH = 10;
+const WORLD_WIDTH = 24;
+const WORLD_DEPTH = 14;
 const GROUND_HEIGHT = 0.22;
 
 const PLAYER_COLORS = [
@@ -115,10 +116,13 @@ function seededNoise(index: number, seed: number) {
   return value - Math.floor(value);
 }
 
-function courseToWorld(point: MiniGolfPoint) {
+function courseToWorld(
+  point: MiniGolfPoint,
+  course: MiniGolfCourse,
+) {
   return new THREE.Vector3(
     (point.x - 0.5) * WORLD_WIDTH,
-    GROUND_HEIGHT,
+    GROUND_HEIGHT + getMiniGolfTerrainElevation(point, course),
     (point.y - 0.5) * WORLD_DEPTH,
   );
 }
@@ -388,67 +392,40 @@ function makeTurfBumpTexture(
   return texture;
 }
 
-function makeWoodTexture(
-  renderer: THREE.WebGLRenderer,
-  course: MiniGolfCourse,
-) {
+function makeTurfAlphaTexture(course: MiniGolfCourse) {
   const canvas = document.createElement("canvas");
   canvas.width = 1024;
-  canvas.height = 256;
+  canvas.height = 576;
   const context = canvas.getContext("2d");
   if (!context) return null;
 
-  const palette =
-    course.theme === "night"
-      ? ["#334a80", "#14285a", "#081638"]
-      : course.theme === "desert"
-        ? ["#f4c76c", "#b56b27", "#6e3514"]
-        : ["#e7c06f", "#a9662e", "#5d2c16"];
-  const gradient = context.createLinearGradient(0, 0, 0, 256);
-  gradient.addColorStop(0, palette[0]);
-  gradient.addColorStop(0.5, palette[1]);
-  gradient.addColorStop(1, palette[2]);
-  context.fillStyle = gradient;
+  context.fillStyle = "#ffffff";
   context.fillRect(0, 0, canvas.width, canvas.height);
-
-  for (let line = 0; line < 58; line += 1) {
-    const y = seededNoise(line, course.id * 173.4) * canvas.height;
-    const offset =
-      (seededNoise(line, course.id * 179.1) - 0.5) * 42;
-    context.strokeStyle =
-      line % 3 === 0
-        ? "rgba(255,239,189,0.23)"
-        : "rgba(59,24,8,0.23)";
-    context.lineWidth = line % 5 === 0 ? 3 : 1.2;
-    context.beginPath();
-    context.moveTo(0, y);
-    context.bezierCurveTo(
-      260,
-      y + offset,
-      760,
-      y - offset,
-      canvas.width,
-      y + offset * 0.25,
+  context.fillStyle = "#000000";
+  for (const water of course.water) {
+    context.fillRect(
+      water.x * canvas.width,
+      water.y * canvas.height,
+      water.width * canvas.width,
+      water.height * canvas.height,
     );
-    context.stroke();
   }
 
-  for (let knot = 0; knot < 9; knot += 1) {
-    const x = 70 + seededNoise(knot, course.id * 181.6) * 884;
-    const y = 30 + seededNoise(knot, course.id * 191.3) * 196;
-    context.strokeStyle = "rgba(55,19,5,0.32)";
-    context.lineWidth = 4;
-    context.beginPath();
-    context.ellipse(x, y, 22, 9, 0.1, 0, Math.PI * 2);
-    context.stroke();
-  }
+  context.beginPath();
+  context.ellipse(
+    course.hole.x * canvas.width,
+    course.hole.y * canvas.height,
+    0.0155 * canvas.width,
+    0.026 * canvas.height,
+    0,
+    0,
+    Math.PI * 2,
+  );
+  context.fill();
 
   const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(3.5, 1);
-  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
   return texture;
 }
 
@@ -543,6 +520,94 @@ function addBox(
   mesh.receiveShadow = true;
   scene.add(mesh);
   return mesh;
+}
+
+function makeRectangularBasinBank(
+  width: number,
+  depth: number,
+  bankWidth: number,
+  drop: number,
+) {
+  const outer = [
+    [-width / 2, -depth / 2],
+    [width / 2, -depth / 2],
+    [width / 2, depth / 2],
+    [-width / 2, depth / 2],
+  ] as const;
+  const inner = [
+    [-width / 2 + bankWidth, -depth / 2 + bankWidth],
+    [width / 2 - bankWidth, -depth / 2 + bankWidth],
+    [width / 2 - bankWidth, depth / 2 - bankWidth],
+    [-width / 2 + bankWidth, depth / 2 - bankWidth],
+  ] as const;
+  const vertices: number[] = [];
+  for (const [x, z] of outer) vertices.push(x, 0, z);
+  for (const [x, z] of inner) vertices.push(x, -drop, z);
+
+  const indices: number[] = [];
+  for (let side = 0; side < 4; side += 1) {
+    const next = (side + 1) % 4;
+    indices.push(side, next, 4 + next);
+    indices.push(side, 4 + next, 4 + side);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(vertices, 3),
+  );
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function makeCupDepressionGeometry(
+  outerRadius: number,
+  innerRadius: number,
+  depth: number,
+) {
+  const segments = 72;
+  const ringRadii = [
+    outerRadius,
+    outerRadius * 0.72,
+    innerRadius,
+  ];
+  const ringHeights = [0, -depth * 0.28, -depth];
+  const vertices: number[] = [];
+  const indices: number[] = [];
+
+  for (let ring = 0; ring < ringRadii.length; ring += 1) {
+    for (let segment = 0; segment <= segments; segment += 1) {
+      const angle = (segment / segments) * Math.PI * 2;
+      vertices.push(
+        Math.cos(angle) * ringRadii[ring],
+        ringHeights[ring],
+        Math.sin(angle) * ringRadii[ring],
+      );
+    }
+  }
+
+  for (let ring = 0; ring < ringRadii.length - 1; ring += 1) {
+    const firstRingStart = ring * (segments + 1);
+    const secondRingStart = (ring + 1) * (segments + 1);
+    for (let segment = 0; segment < segments; segment += 1) {
+      const first = firstRingStart + segment;
+      const nextFirst = first + 1;
+      const second = secondRingStart + segment;
+      const nextSecond = second + 1;
+      indices.push(first, second, nextFirst);
+      indices.push(nextFirst, second, nextSecond);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(vertices, 3),
+  );
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
 function createBallObject(
@@ -725,8 +790,8 @@ export default function MiniGolf3DView({
     renderer.domElement.style.cursor = "grab";
     mount.appendChild(renderer.domElement);
 
-    const courseStart = courseToWorld(course.start);
-    const courseHole = courseToWorld(course.hole);
+    const courseStart = courseToWorld(course.start, course);
+    const courseHole = courseToWorld(course.hole, course);
     const initialCourseDirection = courseHole
       .clone()
       .sub(courseStart)
@@ -753,7 +818,7 @@ export default function MiniGolf3DView({
             y: latest.ballRef.current.y,
           }
         : course.start;
-      const focus = courseToWorld(focusPoint);
+      const focus = courseToWorld(focusPoint, course);
       const toHole = courseHole.clone().sub(focus).setY(0);
       if (toHole.lengthSq() < 0.001) {
         toHole.set(0, 0, -1);
@@ -763,7 +828,8 @@ export default function MiniGolf3DView({
       cameraOrbit.yaw = Math.atan2(-toHole.x, -toHole.z);
       cameraOrbit.pitch = 0.34;
       cameraOrbit.distance = 5.7;
-      cameraOrbit.target.copy(focus).y = GROUND_HEIGHT + 0.28;
+      cameraOrbit.target.copy(focus);
+      cameraOrbit.target.y += 0.28;
       cameraLookTarget.copy(cameraOrbit.target);
     };
     cameraControllerRef.current = {
@@ -967,38 +1033,14 @@ export default function MiniGolf3DView({
       scene.add(hill);
     }
 
-    const woodTexture = makeWoodTexture(renderer, course);
-    const borderMaterial = new THREE.MeshPhysicalMaterial({
-      color: palette.border,
-      map: woodTexture,
-      roughness: 0.38,
-      metalness: course.theme === "night" ? 0.42 : 0.04,
-      clearcoat: 0.42,
-      clearcoatRoughness: 0.32,
-    });
-    const borderDarkMaterial = new THREE.MeshStandardMaterial({
-      color: palette.borderDark,
-      roughness: 0.72,
-      metalness: course.theme === "night" ? 0.35 : 0.02,
-    });
-    addBox(
-      scene,
-      WORLD_WIDTH + 0.9,
-      0.46,
-      WORLD_DEPTH + 0.9,
-      0,
-      -0.02,
-      0,
-      borderDarkMaterial,
-    );
-
     const turfTexture = makeTurfTexture(renderer, course);
     const turfBumpTexture = makeTurfBumpTexture(renderer, course);
+    const turfAlphaTexture = makeTurfAlphaTexture(course);
     const turfGeometry = new THREE.PlaneGeometry(
       WORLD_WIDTH,
       WORLD_DEPTH,
-      64,
-      36,
+      120,
+      70,
     );
     turfGeometry.rotateX(-Math.PI / 2);
     const turfPositions = turfGeometry.attributes
@@ -1010,6 +1052,10 @@ export default function MiniGolf3DView({
     ) {
       const x = turfPositions.getX(index);
       const z = turfPositions.getZ(index);
+      const coursePoint = {
+        x: x / WORLD_WIDTH + 0.5,
+        y: z / WORLD_DEPTH + 0.5,
+      };
       const edge =
         Math.min(
           WORLD_WIDTH / 2 - Math.abs(x),
@@ -1017,14 +1063,22 @@ export default function MiniGolf3DView({
         ) / 2;
       const bump =
         (seededNoise(index, course.id * 61.7) - 0.5) *
-        0.045 *
+        0.035 *
         clamp(edge, 0, 1);
-      turfPositions.setY(index, GROUND_HEIGHT + bump);
+      turfPositions.setY(
+        index,
+        GROUND_HEIGHT +
+          getMiniGolfTerrainElevation(coursePoint, course) +
+          bump,
+      );
     }
     turfGeometry.computeVertexNormals();
     const turfMaterial = new THREE.MeshPhysicalMaterial({
       color: "#ffffff",
       map: turfTexture,
+      alphaMap: turfAlphaTexture,
+      alphaTest: 0.48,
+      transparent: true,
       bumpMap: turfBumpTexture,
       bumpScale: 0.045,
       roughness: 0.88,
@@ -1036,48 +1090,6 @@ export default function MiniGolf3DView({
     const turf = new THREE.Mesh(turfGeometry, turfMaterial);
     turf.receiveShadow = true;
     scene.add(turf);
-
-    const railHeight = 0.62;
-    addBox(
-      scene,
-      WORLD_WIDTH + 0.7,
-      railHeight,
-      0.34,
-      0,
-      GROUND_HEIGHT + railHeight / 2,
-      -WORLD_DEPTH / 2 - 0.18,
-      borderMaterial,
-    );
-    addBox(
-      scene,
-      WORLD_WIDTH + 0.7,
-      railHeight,
-      0.34,
-      0,
-      GROUND_HEIGHT + railHeight / 2,
-      WORLD_DEPTH / 2 + 0.18,
-      borderMaterial,
-    );
-    addBox(
-      scene,
-      0.34,
-      railHeight,
-      WORLD_DEPTH,
-      -WORLD_WIDTH / 2 - 0.18,
-      GROUND_HEIGHT + railHeight / 2,
-      0,
-      borderMaterial,
-    );
-    addBox(
-      scene,
-      0.34,
-      railHeight,
-      WORLD_DEPTH,
-      WORLD_WIDTH / 2 + 0.18,
-      GROUND_HEIGHT + railHeight / 2,
-      0,
-      borderMaterial,
-    );
 
     const sandTexture = makeSandTexture(renderer, course);
     const sandMaterial = new THREE.MeshStandardMaterial({
@@ -1094,7 +1106,7 @@ export default function MiniGolf3DView({
       const center = courseToWorld({
         x: sand.x + sand.width / 2,
         y: sand.y + sand.height / 2,
-      });
+      }, course);
       const geometry = new THREE.PlaneGeometry(
         width,
         depth,
@@ -1117,7 +1129,7 @@ export default function MiniGolf3DView({
       }
       geometry.computeVertexNormals();
       const mesh = new THREE.Mesh(geometry, sandMaterial);
-      mesh.position.set(center.x, GROUND_HEIGHT + 0.025, center.z);
+      mesh.position.set(center.x, center.y + 0.025, center.z);
       mesh.receiveShadow = true;
       scene.add(mesh);
     }
@@ -1130,6 +1142,22 @@ export default function MiniGolf3DView({
       base: Float32Array;
       phase: number;
     }> = [];
+    const basinBankMaterial = new THREE.MeshStandardMaterial({
+      color:
+        course.theme === "desert"
+          ? "#7c4a1d"
+          : course.theme === "night"
+            ? "#123f4a"
+            : "#315b2f",
+      roughness: 0.98,
+      metalness: 0,
+      side: THREE.DoubleSide,
+    });
+    const basinFloorMaterial = new THREE.MeshStandardMaterial({
+      color: course.theme === "night" ? "#021b32" : "#064e68",
+      roughness: 0.62,
+      metalness: 0.04,
+    });
     for (let waterIndex = 0; waterIndex < course.water.length; waterIndex += 1) {
       const water = course.water[waterIndex];
       const width = water.width * WORLD_WIDTH;
@@ -1137,41 +1165,62 @@ export default function MiniGolf3DView({
       const center = courseToWorld({
         x: water.x + water.width / 2,
         y: water.y + water.height / 2,
-      });
+      }, course);
+      const bankWidth = Math.max(
+        0.18,
+        Math.min(0.44, width * 0.16, depth * 0.2),
+      );
+      const basinDrop = 0.24;
+      const innerWidth = Math.max(0.3, width - bankWidth * 1.7);
+      const innerDepth = Math.max(0.3, depth - bankWidth * 1.7);
+      const waterSurfaceY = center.y - basinDrop + 0.04;
+
+      const bank = new THREE.Mesh(
+        makeRectangularBasinBank(
+          width,
+          depth,
+          bankWidth,
+          basinDrop,
+        ),
+        basinBankMaterial,
+      );
+      bank.position.set(center.x, center.y + 0.015, center.z);
+      bank.receiveShadow = true;
+      scene.add(bank);
 
       addBox(
         scene,
-        width + 0.14,
-        0.07,
-        depth + 0.14,
+        innerWidth,
+        0.1,
+        innerDepth,
         center.x,
-        GROUND_HEIGHT - 0.005,
+        waterSurfaceY - 0.11,
         center.z,
-        new THREE.MeshStandardMaterial({
-          color: "#064f75",
-          roughness: 0.38,
-        }),
+        basinFloorMaterial,
       );
 
       const geometry = new THREE.PlaneGeometry(
-        width,
-        depth,
+        innerWidth,
+        innerDepth,
         22,
         14,
       );
       const material = new THREE.MeshPhysicalMaterial({
         color: course.theme === "night" ? "#0ea5e9" : "#38bdf8",
-        roughness: 0.12,
-        metalness: 0.18,
+        roughness: 0.08,
+        metalness: 0.06,
         transparent: true,
-        opacity: 0.86,
+        opacity: 0.84,
         clearcoat: 1,
         clearcoatRoughness: 0.08,
+        transmission: 0.2,
+        thickness: 0.28,
+        ior: 1.333,
         side: THREE.DoubleSide,
       });
       const mesh = new THREE.Mesh(geometry, material);
       mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(center.x, GROUND_HEIGHT + 0.055, center.z);
+      mesh.position.set(center.x, waterSurfaceY, center.z);
       mesh.receiveShadow = true;
       scene.add(mesh);
       waterMeshes.push({
@@ -1209,7 +1258,7 @@ export default function MiniGolf3DView({
       const center = courseToWorld({
         x: obstacle.x + obstacle.width / 2,
         y: obstacle.y + obstacle.height / 2,
-      });
+      }, course);
       const height = 0.76;
       const mesh = addBox(
         scene,
@@ -1217,7 +1266,7 @@ export default function MiniGolf3DView({
         height,
         depth,
         center.x,
-        GROUND_HEIGHT + height / 2,
+        center.y + height / 2,
         center.z,
         wallMaterial,
       );
@@ -1237,7 +1286,7 @@ export default function MiniGolf3DView({
         0.065,
         Math.max(0.12, depth - 0.08),
         center.x,
-        GROUND_HEIGHT + height + 0.015,
+        center.y + height + 0.015,
         center.z,
         wallTopMaterial,
       );
@@ -1248,7 +1297,7 @@ export default function MiniGolf3DView({
           bolt.scale.y = 0.45;
           bolt.position.set(
             center.x + xDirection * Math.max(0, width / 2 - 0.12),
-            GROUND_HEIGHT + height + 0.065,
+            center.y + height + 0.065,
             center.z + zDirection * Math.max(0, depth / 2 - 0.12),
           );
           bolt.castShadow = true;
@@ -1264,7 +1313,7 @@ export default function MiniGolf3DView({
       flatShading: true,
     });
     for (const obstacle of course.roundObstacles) {
-      const center = courseToWorld(obstacle);
+      const center = courseToWorld(obstacle, course);
       const radius = obstacle.radius * WORLD_WIDTH;
       const rock = new THREE.Mesh(
         new THREE.DodecahedronGeometry(radius, 2),
@@ -1273,7 +1322,7 @@ export default function MiniGolf3DView({
       rock.scale.y = 0.72;
       rock.position.set(
         center.x,
-        GROUND_HEIGHT + radius * 0.63,
+        center.y + radius * 0.63,
         center.z,
       );
       rock.rotation.set(
@@ -1317,10 +1366,10 @@ export default function MiniGolf3DView({
         ...course.obstacles,
       ].some((rect) => pointInRect(x, y, rect));
       if (blocked) continue;
-      const world = courseToWorld({ x, y });
+      const world = courseToWorld({ x, y }, course);
       dummy.position.set(
         world.x,
-        GROUND_HEIGHT + 0.015,
+        world.y + 0.015,
         world.z,
       );
       dummy.rotation.y =
@@ -1346,30 +1395,81 @@ export default function MiniGolf3DView({
     blades.receiveShadow = true;
     scene.add(blades);
 
-    const hole = courseToWorld(course.hole);
-    const cupMaterial = new THREE.MeshStandardMaterial({
-      color: "#020617",
-      roughness: 0.66,
-      metalness: 0.1,
+    const hole = courseToWorld(course.hole, course);
+    const holeGroundY = hole.y;
+    const cupDepth = 0.36;
+    const depression = new THREE.Mesh(
+      makeCupDepressionGeometry(0.39, 0.175, cupDepth),
+      new THREE.MeshStandardMaterial({
+        color:
+          course.theme === "desert"
+            ? "#6f4b22"
+            : palette.grassDark,
+        roughness: 0.96,
+        metalness: 0,
+        side: THREE.DoubleSide,
+      }),
+    );
+    depression.position.set(
+      hole.x,
+      holeGroundY + 0.018,
+      hole.z,
+    );
+    depression.receiveShadow = true;
+    scene.add(depression);
+
+    const cupMaterial = new THREE.MeshPhysicalMaterial({
+      color: "#05070b",
+      roughness: 0.54,
+      metalness: 0.16,
+      clearcoat: 0.25,
+      side: THREE.DoubleSide,
     });
     const cup = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.19, 0.16, 0.11, 40),
+      new THREE.CylinderGeometry(
+        0.175,
+        0.145,
+        cupDepth,
+        48,
+        3,
+        true,
+      ),
       cupMaterial,
     );
-    cup.position.set(hole.x, GROUND_HEIGHT + 0.005, hole.z);
+    cup.position.set(
+      hole.x,
+      holeGroundY - cupDepth * 0.54,
+      hole.z,
+    );
     cup.receiveShadow = true;
     scene.add(cup);
 
-    const rim = new THREE.Mesh(
-      new THREE.TorusGeometry(0.205, 0.026, 12, 48),
+    const cupBottom = new THREE.Mesh(
+      new THREE.CircleGeometry(0.145, 48),
       new THREE.MeshStandardMaterial({
-        color: course.theme === "night" ? "#67e8f9" : "#f7df83",
-        roughness: 0.32,
-        metalness: 0.58,
+        color: "#000000",
+        roughness: 1,
+      }),
+    );
+    cupBottom.rotation.x = -Math.PI / 2;
+    cupBottom.position.set(
+      hole.x,
+      holeGroundY - cupDepth - 0.008,
+      hole.z,
+    );
+    cupBottom.receiveShadow = true;
+    scene.add(cupBottom);
+
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(0.178, 0.012, 10, 48),
+      new THREE.MeshStandardMaterial({
+        color: "#d7dee6",
+        roughness: 0.42,
+        metalness: 0.38,
       }),
     );
     rim.rotation.x = -Math.PI / 2;
-    rim.position.set(hole.x, GROUND_HEIGHT + 0.045, hole.z);
+    rim.position.set(hole.x, holeGroundY - 0.012, hole.z);
     rim.castShadow = true;
     scene.add(rim);
 
@@ -1381,7 +1481,7 @@ export default function MiniGolf3DView({
         metalness: 0.72,
       }),
     );
-    pole.position.set(hole.x, GROUND_HEIGHT + 1.13, hole.z);
+    pole.position.set(hole.x, holeGroundY - 0.72, hole.z);
     pole.castShadow = true;
     scene.add(pole);
 
@@ -1401,11 +1501,12 @@ export default function MiniGolf3DView({
     );
     flag.position.set(
       hole.x + 0.02,
-      GROUND_HEIGHT + 2.2,
+      holeGroundY + 0.1,
       hole.z,
     );
     flag.castShadow = true;
     scene.add(flag);
+    let flagLift = 0.22;
 
     const treeTrunkMaterial = new THREE.MeshStandardMaterial({
       color: "#754416",
@@ -1609,6 +1710,10 @@ export default function MiniGolf3DView({
         -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
       );
       raycaster.setFromCamera(ndc, camera);
+      const terrainHit = raycaster.intersectObject(turf, false)[0];
+      if (terrainHit) {
+        return worldToCourse(terrainHit.point);
+      }
       const hit = raycaster.ray.intersectPlane(
         groundPlane,
         intersection,
@@ -1918,7 +2023,7 @@ export default function MiniGolf3DView({
               x: player.ball_x ?? course.start.x,
               y: player.ball_y ?? course.start.y,
             };
-        const world = courseToWorld(point);
+        const world = courseToWorld(point, course);
         let sinkProgress = 0;
         if (isCurrent && motion.sinking) {
           sinkProgress = clamp(
@@ -1929,7 +2034,7 @@ export default function MiniGolf3DView({
         }
         object.root.position.set(
           world.x,
-          GROUND_HEIGHT + 0.19 - sinkProgress * 0.22,
+          world.y + 0.19 - sinkProgress * 0.52,
           world.z,
         );
         object.sphere.scale.setScalar(
@@ -1958,10 +2063,10 @@ export default function MiniGolf3DView({
           const point = courseToWorld({
             x: motion.x - directionX * distance,
             y: motion.y - directionY * distance,
-          });
+          }, course);
           trailPositions[index * 3] = point.x;
           trailPositions[index * 3 + 1] =
-            GROUND_HEIGHT + 0.2 - index * 0.008;
+            point.y + 0.2 - index * 0.008;
           trailPositions[index * 3 + 2] = point.z;
         }
         (
@@ -1995,8 +2100,8 @@ export default function MiniGolf3DView({
         );
         if (direction.lengthSq() > 0.0001) {
           direction.normalize();
-          const start = courseToWorld(latest.aimOrigin);
-          start.y = GROUND_HEIGHT + 0.28;
+          const start = courseToWorld(latest.aimOrigin, course);
+          start.y += 0.28;
           const guideLength = 2.35 + power * 5.25;
           aimColor.setHSL(
             0.36 * (1 - power),
@@ -2077,8 +2182,8 @@ export default function MiniGolf3DView({
                   course.start.y,
               }
             : course.start;
-      desiredCameraTarget.copy(courseToWorld(cameraPoint));
-      desiredCameraTarget.y = GROUND_HEIGHT + 0.3;
+      desiredCameraTarget.copy(courseToWorld(cameraPoint, course));
+      desiredCameraTarget.y += 0.3;
       cameraLookAhead.set(0, 0, 0);
       if (
         latest.currentPlayer &&
@@ -2122,6 +2227,23 @@ export default function MiniGolf3DView({
       );
       camera.lookAt(cameraLookTarget);
 
+      const distanceToHole = Math.hypot(
+        motion.x - course.hole.x,
+        motion.y - course.hole.y,
+      );
+      const flagTarget = motion.sinking
+        ? 0
+        : distanceToHole < 0.22
+          ? 1
+          : 0.22;
+      flagLift +=
+        (flagTarget - flagLift) *
+        (1 -
+          Math.exp(
+            -frameDelta * (motion.sinking ? 10.5 : 4.5),
+          ));
+      pole.position.y = holeGroundY - 0.72 + flagLift * 1.85;
+      flag.position.y = holeGroundY + 0.1 + flagLift * 2.1;
       flag.rotation.y = Math.sin(elapsed * 1.4) * 0.08;
       renderer.render(scene, camera);
       frame += 1;
@@ -2187,6 +2309,7 @@ export default function MiniGolf3DView({
       bumpTexture?.dispose();
       turfTexture?.dispose();
       turfBumpTexture?.dispose();
+      turfAlphaTexture?.dispose();
       sandTexture?.dispose();
       renderer.dispose();
       renderer.forceContextLoss();

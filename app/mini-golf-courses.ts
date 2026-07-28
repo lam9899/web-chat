@@ -27,6 +27,85 @@ export type MiniGolfCourse = {
   sand: MiniGolfRect[];
 };
 
+const TERRAIN_PROFILES = [
+  { slopeX: 0.24, slopeY: -0.06, waveX: 0.11, waveY: 0.08 },
+  { slopeX: -0.17, slopeY: 0.22, waveX: 0.13, waveY: 0.11 },
+  { slopeX: 0.12, slopeY: 0.18, waveX: 0.09, waveY: 0.14 },
+  { slopeX: -0.2, slopeY: -0.12, waveX: 0.15, waveY: 0.1 },
+  { slopeX: 0.18, slopeY: -0.2, waveX: 0.12, waveY: 0.13 },
+  { slopeX: -0.16, slopeY: 0.17, waveX: 0.14, waveY: 0.12 },
+  { slopeX: 0.27, slopeY: 0.04, waveX: 0.16, waveY: 0.09 },
+  { slopeX: -0.14, slopeY: -0.23, waveX: 0.11, waveY: 0.15 },
+  { slopeX: 0.21, slopeY: 0.19, waveX: 0.16, waveY: 0.14 },
+] as const;
+
+function clamp01(value: number) {
+  return Math.min(1, Math.max(0, value));
+}
+
+function smoothstep(edge0: number, edge1: number, value: number) {
+  const normalized = clamp01((value - edge0) / (edge1 - edge0));
+  return normalized * normalized * (3 - 2 * normalized);
+}
+
+function pointDistance(first: MiniGolfPoint, second: MiniGolfPoint) {
+  return Math.hypot(first.x - second.x, first.y - second.y);
+}
+
+export function getMiniGolfTerrainElevation(
+  point: MiniGolfPoint,
+  course: MiniGolfCourse,
+) {
+  const profile =
+    TERRAIN_PROFILES[(course.id - 1) % TERRAIN_PROFILES.length];
+  const x = clamp01(point.x);
+  const y = clamp01(point.y);
+  const phase = course.id * 0.37;
+  const directionalSlope =
+    profile.slopeX * (x - 0.5) +
+    profile.slopeY * (y - 0.5);
+  const broadHills =
+    Math.sin((x * 1.45 + phase) * Math.PI) * profile.waveX +
+    Math.cos((y * 1.35 - phase * 0.55) * Math.PI) *
+      profile.waveY +
+    Math.sin((x + y + phase * 0.3) * Math.PI * 1.2) * 0.045;
+
+  const startBlend =
+    1 - smoothstep(0.055, 0.16, pointDistance(point, course.start));
+  const holeBlend =
+    1 - smoothstep(0.045, 0.14, pointDistance(point, course.hole));
+  const flattenAmount = Math.max(startBlend * 0.72, holeBlend * 0.82);
+
+  return (directionalSlope + broadHills) * (1 - flattenAmount);
+}
+
+export function getMiniGolfTerrainGradient(
+  point: MiniGolfPoint,
+  course: MiniGolfCourse,
+) {
+  const sampleDistance = 0.004;
+  const left = getMiniGolfTerrainElevation(
+    { x: point.x - sampleDistance, y: point.y },
+    course,
+  );
+  const right = getMiniGolfTerrainElevation(
+    { x: point.x + sampleDistance, y: point.y },
+    course,
+  );
+  const top = getMiniGolfTerrainElevation(
+    { x: point.x, y: point.y - sampleDistance },
+    course,
+  );
+  const bottom = getMiniGolfTerrainElevation(
+    { x: point.x, y: point.y + sampleDistance },
+    course,
+  );
+  return {
+    x: (right - left) / (sampleDistance * 2),
+    y: (bottom - top) / (sampleDistance * 2),
+  };
+}
+
 export const MINI_GOLF_COURSES: MiniGolfCourse[] = [
   {
     id: 1,
