@@ -7,14 +7,16 @@ import {
 } from "react";
 import * as THREE from "three";
 import {
+  getMiniGolfMovingObstaclePose,
   getMiniGolfTerrainElevation,
   type MiniGolfCourse,
+  type MiniGolfMovingObstacle,
   type MiniGolfPoint,
   type MiniGolfRect,
 } from "./mini-golf-courses";
 
-const WORLD_WIDTH = 24;
-const WORLD_DEPTH = 14;
+const WORLD_WIDTH = 32;
+const WORLD_DEPTH = 18;
 const GROUND_HEIGHT = 0.22;
 
 const PLAYER_COLORS = [
@@ -91,6 +93,12 @@ type ScenicOccluder = {
   root: THREE.Group;
   center: THREE.Vector3;
   radius: number;
+};
+
+type MovingObstacleObject = {
+  obstacle: MiniGolfMovingObstacle;
+  root: THREE.Group;
+  movingPart: THREE.Mesh;
 };
 
 type CameraController = {
@@ -323,31 +331,33 @@ function makeSandTexture(
 
 function makeGolfBumpTexture(renderer: THREE.WebGLRenderer) {
   const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 128;
+  canvas.width = 512;
+  canvas.height = 256;
   const context = canvas.getContext("2d");
   if (!context) return null;
 
-  context.fillStyle = "#c8c8c8";
-  context.fillRect(0, 0, 256, 128);
-  for (let row = 0; row < 12; row += 1) {
-    for (let column = 0; column < 24; column += 1) {
+  context.fillStyle = "#d8d8d8";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  for (let row = 0; row < 24; row += 1) {
+    for (let column = 0; column < 48; column += 1) {
       const x = column * 11 + (row % 2) * 5.5;
       const y = row * 11;
       const dimple = context.createRadialGradient(
-        x - 1,
-        y - 1,
+        x - 1.6,
+        y - 1.8,
         0,
         x,
         y,
-        4,
+        4.7,
       );
-      dimple.addColorStop(0, "#f5f5f5");
-      dimple.addColorStop(0.5, "#969696");
-      dimple.addColorStop(1, "#d8d8d8");
+      dimple.addColorStop(0, "#f7f7f7");
+      dimple.addColorStop(0.28, "#e5e5e5");
+      dimple.addColorStop(0.63, "#858585");
+      dimple.addColorStop(0.82, "#b5b5b5");
+      dimple.addColorStop(1, "#dedede");
       context.fillStyle = dimple;
       context.beginPath();
-      context.arc(x, y, 4, 0, Math.PI * 2);
+      context.arc(x, y, 4.8, 0, Math.PI * 2);
       context.fill();
     }
   }
@@ -355,7 +365,7 @@ function makeGolfBumpTexture(renderer: THREE.WebGLRenderer) {
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(1.5, 1);
+  texture.repeat.set(1.1, 1.1);
   texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return texture;
 }
@@ -627,15 +637,15 @@ function createBallObject(
   const root = new THREE.Group();
   const material = new THREE.MeshPhysicalMaterial({
     color,
-    roughness: 0.28,
+    roughness: 0.4,
     metalness: 0.03,
-    clearcoat: 1,
-    clearcoatRoughness: 0.12,
+    clearcoat: 0.88,
+    clearcoatRoughness: 0.2,
     bumpMap: bumpTexture,
-    bumpScale: 0.025,
+    bumpScale: 0.062,
   });
   const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(0.17, 36, 24),
+    new THREE.SphereGeometry(0.17, 64, 48),
     material,
   );
   sphere.castShadow = true;
@@ -815,7 +825,7 @@ export default function MiniGolf3DView({
         -initialCourseDirection.z,
       ),
       pitch: 0.34,
-      distance: 5.7,
+      distance: 7.2,
       target: courseStart
         .clone()
         .add(new THREE.Vector3(0, 0.28, 0)),
@@ -839,7 +849,7 @@ export default function MiniGolf3DView({
       }
       cameraOrbit.yaw = Math.atan2(-toHole.x, -toHole.z);
       cameraOrbit.pitch = 0.34;
-      cameraOrbit.distance = 5.7;
+      cameraOrbit.distance = 7.2;
       cameraOrbit.target.copy(focus);
       cameraOrbit.target.y += 0.28;
       cameraLookTarget.copy(cameraOrbit.target);
@@ -852,8 +862,8 @@ export default function MiniGolf3DView({
       zoom: (direction) => {
         cameraOrbit.distance = clamp(
           cameraOrbit.distance + direction * 0.75,
-          3.1,
-          10.5,
+          3.6,
+          14.5,
         );
       },
     };
@@ -885,10 +895,10 @@ export default function MiniGolf3DView({
     sunlight.position.set(-7, 14, 9);
     sunlight.castShadow = true;
     sunlight.shadow.mapSize.set(2048, 2048);
-    sunlight.shadow.camera.left = -14;
-    sunlight.shadow.camera.right = 14;
-    sunlight.shadow.camera.top = 12;
-    sunlight.shadow.camera.bottom = -12;
+    sunlight.shadow.camera.left = -19;
+    sunlight.shadow.camera.right = 19;
+    sunlight.shadow.camera.top = 15;
+    sunlight.shadow.camera.bottom = -15;
     sunlight.shadow.camera.near = 1;
     sunlight.shadow.camera.far = 35;
     sunlight.shadow.bias = -0.00015;
@@ -1264,6 +1274,64 @@ export default function MiniGolf3DView({
       roughness: 0.18,
       metalness: 0.92,
     });
+
+    const boundaryMaterial = new THREE.MeshPhysicalMaterial({
+      color:
+        course.theme === "night"
+          ? "#465f91"
+          : course.theme === "desert"
+            ? "#a4642b"
+            : "#8a542a",
+      roughness: 0.48,
+      metalness: course.theme === "night" ? 0.52 : 0.16,
+      clearcoat: 0.58,
+      clearcoatRoughness: 0.3,
+    });
+    for (const rail of course.boundaryRails) {
+      const from = clamp(Math.min(rail.from, rail.to), 0, 1);
+      const to = clamp(Math.max(rail.from, rail.to), 0, 1);
+      const edgeCenter = (from + to) / 2;
+      const isHorizontal =
+        rail.side === "top" || rail.side === "bottom";
+      const coursePoint = isHorizontal
+        ? {
+            x: edgeCenter,
+            y: rail.side === "top" ? 0.02 : 0.98,
+          }
+        : {
+            x: rail.side === "left" ? 0.02 : 0.98,
+            y: edgeCenter,
+          };
+      const center = courseToWorld(coursePoint, course);
+      const width = isHorizontal
+        ? Math.max(0.18, (to - from) * WORLD_WIDTH)
+        : 0.26;
+      const depth = isHorizontal
+        ? 0.26
+        : Math.max(0.18, (to - from) * WORLD_DEPTH);
+      const railHeight = 0.58;
+      const mesh = addBox(
+        scene,
+        width,
+        railHeight,
+        depth,
+        center.x,
+        center.y + railHeight / 2,
+        center.z,
+        boundaryMaterial,
+      );
+      const edge = new THREE.LineSegments(
+        new THREE.EdgesGeometry(mesh.geometry),
+        new THREE.LineBasicMaterial({
+          color:
+            course.theme === "night" ? "#a9c7ff" : "#f6d49a",
+          transparent: true,
+          opacity: 0.58,
+        }),
+      );
+      mesh.add(edge);
+    }
+
     for (const obstacle of course.obstacles) {
       const width = obstacle.width * WORLD_WIDTH;
       const depth = obstacle.height * WORLD_DEPTH;
@@ -1345,6 +1413,74 @@ export default function MiniGolf3DView({
       rock.castShadow = true;
       rock.receiveShadow = true;
       scene.add(rock);
+    }
+
+    const movingObstacleMaterial =
+      new THREE.MeshPhysicalMaterial({
+        color:
+          course.theme === "night" ? "#8b5cf6" : "#f97316",
+        emissive:
+          course.theme === "night" ? "#6d28d9" : "#9a3412",
+        emissiveIntensity: 0.42,
+        roughness: 0.28,
+        metalness: 0.66,
+        clearcoat: 0.72,
+        clearcoatRoughness: 0.2,
+      });
+    const movingObstacleObjects: MovingObstacleObject[] = [];
+    for (const obstacle of course.movingObstacles) {
+      const root = new THREE.Group();
+      const pose = getMiniGolfMovingObstaclePose(
+        obstacle,
+        Date.now(),
+      );
+      const center = courseToWorld(pose, course);
+      let movingPart: THREE.Mesh;
+
+      if (obstacle.shape === "circle") {
+        const radius =
+          (obstacle.radius ?? 0.04) * WORLD_WIDTH;
+        movingPart = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(radius, 3),
+          movingObstacleMaterial,
+        );
+        movingPart.position.y = radius * 0.85;
+      } else {
+        const width =
+          (obstacle.width ?? 0.04) * WORLD_WIDTH;
+        const depth =
+          (obstacle.height ?? 0.16) * WORLD_DEPTH;
+        movingPart = new THREE.Mesh(
+          new THREE.BoxGeometry(width, 0.72, depth, 3, 2, 3),
+          movingObstacleMaterial,
+        );
+        movingPart.position.y = 0.38;
+        const warningStripe = new THREE.Mesh(
+          new THREE.BoxGeometry(
+            Math.max(0.12, width - 0.04),
+            0.08,
+            Math.max(0.12, depth - 0.04),
+          ),
+          new THREE.MeshBasicMaterial({
+            color: "#fde047",
+            transparent: true,
+            opacity: 0.86,
+          }),
+        );
+        warningStripe.position.y = 0.4;
+        movingPart.add(warningStripe);
+      }
+
+      movingPart.castShadow = true;
+      movingPart.receiveShadow = true;
+      root.add(movingPart);
+      root.position.set(center.x, center.y, center.z);
+      scene.add(root);
+      movingObstacleObjects.push({
+        obstacle,
+        root,
+        movingPart,
+      });
     }
 
     const bladeGeometry = new THREE.ConeGeometry(
@@ -1836,8 +1972,8 @@ export default function MiniGolf3DView({
           cameraOrbit.distance = clamp(
             cameraOrbit.distance -
               (nextPinchDistance - pinchDistance) * 0.018,
-            3.1,
-            10.5,
+            3.6,
+            14.5,
           );
         }
         pinchDistance = nextPinchDistance;
@@ -1917,8 +2053,8 @@ export default function MiniGolf3DView({
       event.preventDefault();
       cameraOrbit.distance = clamp(
         cameraOrbit.distance + Math.sign(event.deltaY) * 0.55,
-        3.1,
-        10.5,
+        3.6,
+        14.5,
       );
     };
     const handleDoubleClick = (event: MouseEvent) => {
@@ -2014,6 +2150,28 @@ export default function MiniGolf3DView({
           0,
           0,
         );
+      }
+
+      const synchronizedTime = Date.now();
+      for (const movingObject of movingObstacleObjects) {
+        const pose = getMiniGolfMovingObstaclePose(
+          movingObject.obstacle,
+          synchronizedTime,
+        );
+        const world = courseToWorld(pose, course);
+        movingObject.root.position.set(
+          world.x,
+          world.y,
+          world.z,
+        );
+        if (movingObject.obstacle.shape === "circle") {
+          const spinDirection =
+            movingObject.obstacle.axis === "x" ? -1 : 1;
+          movingObject.movingPart.rotation.z =
+            elapsed * 1.8 * spinDirection;
+          movingObject.movingPart.rotation.x =
+            elapsed * 1.15;
+        }
       }
 
       const visiblePlayers = latest.players.filter(

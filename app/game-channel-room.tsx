@@ -285,7 +285,7 @@ export default function GameChannelRoom({
 
     const refreshTimer = window.setInterval(() => {
       void restoreLobbySession();
-    }, 20_000);
+    }, 10_000);
     const handlePageShow = () => {
       void restoreLobbySession();
     };

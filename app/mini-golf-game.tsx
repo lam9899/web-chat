@@ -10,9 +10,12 @@ import {
 import { createClient } from "@/utils/supabase/client";
 import MiniGolf3DView from "./mini-golf-3d-view";
 import {
+  getMiniGolfMovingObstaclePose,
   getMiniGolfTerrainGradient,
+  isMiniGolfBoundaryProtected,
   MINI_GOLF_COURSES,
   type MiniGolfCourse,
+  type MiniGolfCircle,
   type MiniGolfPoint,
   type MiniGolfRect,
 } from "./mini-golf-courses";
@@ -87,10 +90,12 @@ type BallMotion = {
   sinkStartedAt: number;
   lastSafeX: number;
   lastSafeY: number;
+  shotOriginX: number;
+  shotOriginY: number;
 };
 
 type BallResumeSnapshot = {
-  version: 1;
+  version: 2;
   matchId: string;
   hole: number;
   holeStrokes: number;
@@ -197,10 +202,30 @@ function collideWithRect(
   bounceVelocity(ball, normalX, normalY);
 }
 
+function collideWithCircle(
+  ball: BallMotion,
+  obstacle: MiniGolfCircle,
+) {
+  const differenceX = ball.x - obstacle.x;
+  const differenceY = ball.y - obstacle.y;
+  const distance = Math.hypot(differenceX, differenceY);
+  const minimumDistance = BALL_RADIUS + obstacle.radius;
+
+  if (distance > 0.0001 && distance < minimumDistance) {
+    const normalX = differenceX / distance;
+    const normalY = differenceY / distance;
+    const penetration = minimumDistance - distance;
+    ball.x += normalX * penetration;
+    ball.y += normalY * penetration;
+    bounceVelocity(ball, normalX, normalY);
+  }
+}
+
 function updateBallPhysics(
   ball: BallMotion,
   course: MiniGolfCourse,
   deltaSeconds: number,
+  timeMs: number,
 ) {
   const startedInSand = course.sand.some((rect) =>
     pointInRect(ball.x, ball.y, rect),
@@ -222,25 +247,61 @@ function updateBallPhysics(
     (speedBeforeMove * deltaSeconds) /
     (BALL_RADIUS * CANVAS_WIDTH);
 
-  const minimumX = 0.04 + BALL_RADIUS;
-  const maximumX = 0.96 - BALL_RADIUS;
-  const minimumY = 0.04 + BALL_RADIUS;
-  const maximumY = 0.96 - BALL_RADIUS;
+  const minimumX = 0.02 + BALL_RADIUS;
+  const maximumX = 0.98 - BALL_RADIUS;
+  const minimumY = 0.02 + BALL_RADIUS;
+  const maximumY = 0.98 - BALL_RADIUS;
 
   if (ball.x < minimumX) {
+    if (
+      !isMiniGolfBoundaryProtected(
+        course,
+        "left",
+        ball.y,
+      )
+    ) {
+      return "out-of-bounds" as const;
+    }
     ball.x = minimumX;
-    bounceVelocity(ball, 1, 0);
+    bounceVelocity(ball, 1, 0, 0.72);
   } else if (ball.x > maximumX) {
+    if (
+      !isMiniGolfBoundaryProtected(
+        course,
+        "right",
+        ball.y,
+      )
+    ) {
+      return "out-of-bounds" as const;
+    }
     ball.x = maximumX;
-    bounceVelocity(ball, -1, 0);
+    bounceVelocity(ball, -1, 0, 0.72);
   }
 
   if (ball.y < minimumY) {
+    if (
+      !isMiniGolfBoundaryProtected(
+        course,
+        "top",
+        ball.x,
+      )
+    ) {
+      return "out-of-bounds" as const;
+    }
     ball.y = minimumY;
-    bounceVelocity(ball, 0, 1);
+    bounceVelocity(ball, 0, 1, 0.72);
   } else if (ball.y > maximumY) {
+    if (
+      !isMiniGolfBoundaryProtected(
+        course,
+        "bottom",
+        ball.x,
+      )
+    ) {
+      return "out-of-bounds" as const;
+    }
     ball.y = maximumY;
-    bounceVelocity(ball, 0, -1);
+    bounceVelocity(ball, 0, -1, 0.72);
   }
 
   for (const obstacle of course.obstacles) {
@@ -248,18 +309,28 @@ function updateBallPhysics(
   }
 
   for (const obstacle of course.roundObstacles) {
-    const differenceX = ball.x - obstacle.x;
-    const differenceY = ball.y - obstacle.y;
-    const distance = Math.hypot(differenceX, differenceY);
-    const minimumDistance = BALL_RADIUS + obstacle.radius;
+    collideWithCircle(ball, obstacle);
+  }
 
-    if (distance > 0.0001 && distance < minimumDistance) {
-      const normalX = differenceX / distance;
-      const normalY = differenceY / distance;
-      const penetration = minimumDistance - distance;
-      ball.x += normalX * penetration;
-      ball.y += normalY * penetration;
-      bounceVelocity(ball, normalX, normalY);
+  for (const obstacle of course.movingObstacles) {
+    const pose = getMiniGolfMovingObstaclePose(
+      obstacle,
+      timeMs,
+    );
+    if (obstacle.shape === "circle") {
+      collideWithCircle(ball, {
+        ...pose,
+        radius: obstacle.radius ?? 0.04,
+      });
+    } else {
+      const width = obstacle.width ?? 0.04;
+      const height = obstacle.height ?? 0.16;
+      collideWithRect(ball, {
+        x: pose.x - width / 2,
+        y: pose.y - height / 2,
+        width,
+        height,
+      });
     }
   }
 
@@ -270,6 +341,7 @@ function updateBallPhysics(
   const frictionByTime = Math.pow(friction, deltaSeconds * 60);
   ball.vx *= frictionByTime;
   ball.vy *= frictionByTime;
+  return "in-bounds" as const;
 }
 
 function themeColors(course: MiniGolfCourse) {
@@ -505,6 +577,8 @@ export default function MiniGolfGame({
     sinkStartedAt: 0,
     lastSafeX: MINI_GOLF_COURSES[0].start.x,
     lastSafeY: MINI_GOLF_COURSES[0].start.y,
+    shotOriginX: MINI_GOLF_COURSES[0].start.x,
+    shotOriginY: MINI_GOLF_COURSES[0].start.y,
   });
   const shotResolvingRef = useRef(false);
   const shotStartedAtRef = useRef(0);
@@ -749,11 +823,13 @@ export default function MiniGolfGame({
             Number.isFinite(snapshotBall.vx) &&
             Number.isFinite(snapshotBall.vy) &&
             Number.isFinite(snapshotBall.lastSafeX) &&
-            Number.isFinite(snapshotBall.lastSafeY),
+            Number.isFinite(snapshotBall.lastSafeY) &&
+            Number.isFinite(snapshotBall.shotOriginX) &&
+            Number.isFinite(snapshotBall.shotOriginY),
         );
 
         if (
-          snapshot?.version === 1 &&
+          snapshot?.version === 2 &&
           snapshot.matchId === match.match_id &&
           snapshot.hole === currentPlayer.current_hole &&
           snapshot.holeStrokes === currentPlayer.hole_strokes &&
@@ -810,6 +886,8 @@ export default function MiniGolfGame({
       sinkStartedAt: 0,
       lastSafeX: nextX,
       lastSafeY: nextY,
+      shotOriginX: nextX,
+      shotOriginY: nextY,
     };
     setBallIsSinking(false);
   }, [
@@ -839,7 +917,7 @@ export default function MiniGolfGame({
 
       const currentTime = performance.now();
       const snapshot: BallResumeSnapshot = {
-        version: 1,
+        version: 2,
         matchId: match.match_id,
         hole: currentPlayer.current_hole,
         holeStrokes: currentPlayer.hole_strokes,
@@ -861,6 +939,8 @@ export default function MiniGolfGame({
           sinking: ball.sinking,
           lastSafeX: ball.lastSafeX,
           lastSafeY: ball.lastSafeY,
+          shotOriginX: ball.shotOriginX,
+          shotOriginY: ball.shotOriginY,
         },
       };
 
@@ -917,6 +997,7 @@ export default function MiniGolfGame({
       ballY: number,
       holed: boolean,
       penalty: boolean,
+      successNotice?: string,
     ) => {
       if (shotResolvingRef.current) return;
       shotResolvingRef.current = true;
@@ -940,13 +1021,14 @@ export default function MiniGolfGame({
         clearResumeSnapshot();
         setErrorMessage("");
         setNoticeMessage(
-          holed
+          successNotice ??
+          (holed
             ? activePlayerCount <= 1
               ? "⛳ Vào lỗ! Đang mở hố tiếp theo."
               : "⛳ Đã vào lỗ! Hãy chờ mọi người hoàn thành hố này."
             : penalty
               ? "💦 Bóng xuống nước: cộng một gậy phạt."
-              : "Bóng đã dừng. Bạn có thể đánh tiếp.",
+              : "Bóng đã dừng. Bạn có thể đánh tiếp."),
         );
         await loadAfterAction();
       }
@@ -1793,7 +1875,27 @@ export default function MiniGolfGame({
       }
 
       if (ball.moving && !shotResolvingRef.current) {
-        updateBallPhysics(ball, course, deltaSeconds);
+        const physicsSteps = Math.max(
+          1,
+          Math.ceil(deltaSeconds / 0.008),
+        );
+        const physicsTime = Date.now();
+        let boundaryResult:
+          | "in-bounds"
+          | "out-of-bounds" = "in-bounds";
+        for (
+          let step = 0;
+          step < physicsSteps;
+          step += 1
+        ) {
+          boundaryResult = updateBallPhysics(
+            ball,
+            course,
+            deltaSeconds / physicsSteps,
+            physicsTime,
+          );
+          if (boundaryResult === "out-of-bounds") break;
+        }
 
         const inWater = course.water.some((rect) =>
           pointInRect(ball.x, ball.y, rect),
@@ -1806,7 +1908,23 @@ export default function MiniGolfGame({
         );
         const speed = ballPixelSpeed(ball);
 
-        if (inWater) {
+        if (boundaryResult === "out-of-bounds") {
+          ball.x = ball.shotOriginX;
+          ball.y = ball.shotOriginY;
+          ball.lastSafeX = ball.shotOriginX;
+          ball.lastSafeY = ball.shotOriginY;
+          ball.vx = 0;
+          ball.vy = 0;
+          ball.moving = false;
+          setBallIsSinking(false);
+          void recordShot(
+            ball.x,
+            ball.y,
+            false,
+            false,
+            "↩️ Bóng ra mép hở và đã quay lại đúng vị trí vừa đánh.",
+          );
+        } else if (inWater) {
           ball.x = ball.lastSafeX;
           ball.y = ball.lastSafeY;
           ball.vx = 0;
@@ -2162,6 +2280,8 @@ export default function MiniGolfGame({
     setBallIsSinking(false);
     ball.lastSafeX = ball.x;
     ball.lastSafeY = ball.y;
+    ball.shotOriginX = ball.x;
+    ball.shotOriginY = ball.y;
     shotStartedAtRef.current = performance.now();
     setNoticeMessage(
       `Bóng đang lăn với lực ${Math.round(rawPower * 100)}%...`,
@@ -2355,7 +2475,7 @@ export default function MiniGolfGame({
                 }`}
               >
                 {player.player_status === "dnf"
-                  ? "Bỏ cuộc"
+                  ? `Thua · ${player.total_strokes} gậy`
                   : `${player.total_strokes} gậy`}
               </span>
             </div>
@@ -2519,7 +2639,7 @@ export default function MiniGolfGame({
                     }`}
                   >
                     {player.player_status === "dnf"
-                      ? "×"
+                      ? (displayedStrokes ?? MAX_HOLE_STROKES)
                       : (displayedStrokes ?? "—")}
                   </span>
                 </div>
