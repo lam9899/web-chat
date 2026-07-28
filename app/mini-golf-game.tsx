@@ -10,12 +10,19 @@ import {
 import { createClient } from "@/utils/supabase/client";
 import MiniGolf3DView from "./mini-golf-3d-view";
 import {
+  getClosestMiniGolfPlayableEdge,
+  getMiniGolfAreaOutline,
+  getMiniGolfMechanismAngle,
   getMiniGolfMovingObstaclePose,
+  getMiniGolfPressAmount,
   getMiniGolfTerrainGradient,
-  isMiniGolfBoundaryProtected,
+  isMiniGolfPlayableEdgeGuarded,
+  isMiniGolfPointInArea,
+  isMiniGolfPointInPlayableArea,
   MINI_GOLF_COURSES,
   type MiniGolfCourse,
   type MiniGolfCircle,
+  type MiniGolfMechanism,
   type MiniGolfPoint,
   type MiniGolfRect,
 } from "./mini-golf-courses";
@@ -117,17 +124,19 @@ function seededNoise(index: number, seed: number) {
   return value - Math.floor(value);
 }
 
-function pointInRect(
-  x: number,
-  y: number,
-  rect: MiniGolfRect,
+function traceMiniGolfArea(
+  context: CanvasRenderingContext2D,
+  area: Parameters<typeof getMiniGolfAreaOutline>[0],
 ) {
-  return (
-    x >= rect.x &&
-    x <= rect.x + rect.width &&
-    y >= rect.y &&
-    y <= rect.y + rect.height
-  );
+  const outline = getMiniGolfAreaOutline(area, 48);
+  context.beginPath();
+  outline.forEach((point, index) => {
+    const x = point.x * CANVAS_WIDTH;
+    const y = point.y * CANVAS_HEIGHT;
+    if (index === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  });
+  context.closePath();
 }
 
 function pixelDistance(
@@ -221,14 +230,179 @@ function collideWithCircle(
   }
 }
 
+function pointInRotatedRect(
+  point: MiniGolfPoint,
+  center: MiniGolfPoint,
+  width: number,
+  height: number,
+  angle: number,
+) {
+  const cosine = Math.cos(-angle);
+  const sine = Math.sin(-angle);
+  const offsetX = point.x - center.x;
+  const offsetY = point.y - center.y;
+  const localX = offsetX * cosine - offsetY * sine;
+  const localY = offsetX * sine + offsetY * cosine;
+  return (
+    Math.abs(localX) <= width / 2 &&
+    Math.abs(localY) <= height / 2
+  );
+}
+
+function collideWithRotatingBar(
+  ball: BallMotion,
+  mechanism: MiniGolfMechanism,
+  angle: number,
+  length: number,
+  thickness: number,
+) {
+  const directionX = Math.cos(angle);
+  const directionY = Math.sin(angle);
+  const halfLength = length / 2;
+  const startX = mechanism.x - directionX * halfLength;
+  const startY = mechanism.y - directionY * halfLength;
+  const along = clamp(
+    (ball.x - startX) * directionX +
+      (ball.y - startY) * directionY,
+    0,
+    length,
+  );
+  const nearestX = startX + directionX * along;
+  const nearestY = startY + directionY * along;
+  let differenceX = ball.x - nearestX;
+  let differenceY = ball.y - nearestY;
+  let distance = Math.hypot(differenceX, differenceY);
+  const minimumDistance = BALL_RADIUS + thickness / 2;
+  if (distance >= minimumDistance) return;
+
+  if (distance < 0.0001) {
+    differenceX = -directionY;
+    differenceY = directionX;
+    distance = 1;
+  }
+  const normalX = differenceX / distance;
+  const normalY = differenceY / distance;
+  const penetration = minimumDistance - distance;
+  ball.x += normalX * penetration;
+  ball.y += normalY * penetration;
+  bounceVelocity(ball, normalX, normalY, 0.84);
+
+  const spin = mechanism.speed ?? 1;
+  const radialX = nearestX - mechanism.x;
+  const radialY = nearestY - mechanism.y;
+  ball.vx += -radialY * spin * 0.24;
+  ball.vy += radialX * spin * 0.24;
+}
+
+function applyMiniGolfMechanismPhysics(
+  ball: BallMotion,
+  mechanism: MiniGolfMechanism,
+  deltaSeconds: number,
+  timeMs: number,
+) {
+  if (
+    mechanism.type === "windmill" ||
+    mechanism.type === "spinner"
+  ) {
+    const angle = getMiniGolfMechanismAngle(mechanism, timeMs);
+    const length =
+      mechanism.type === "windmill"
+        ? (mechanism.radius ?? 0.12) * 2
+        : mechanism.length ?? 0.24;
+    const thickness = mechanism.width ?? 0.022;
+    collideWithRotatingBar(
+      ball,
+      mechanism,
+      angle,
+      length,
+      thickness,
+    );
+    if (mechanism.type === "windmill") {
+      collideWithRotatingBar(
+        ball,
+        mechanism,
+        angle + Math.PI / 2,
+        length,
+        thickness,
+      );
+    }
+    return;
+  }
+
+  if (mechanism.type === "press") {
+    const pressAmount = getMiniGolfPressAmount(mechanism, timeMs);
+    if (pressAmount < 0.52) return;
+    const width = mechanism.width ?? 0.1;
+    const height = mechanism.height ?? 0.13;
+    const beforeX = ball.vx;
+    const beforeY = ball.vy;
+    collideWithRect(ball, {
+      x: mechanism.x - width / 2,
+      y: mechanism.y - height / 2,
+      width,
+      height,
+    });
+    if (ball.vx !== beforeX || ball.vy !== beforeY) {
+      const distance = Math.max(
+        0.001,
+        Math.hypot(ball.x - mechanism.x, ball.y - mechanism.y),
+      );
+      ball.vx +=
+        ((ball.x - mechanism.x) / distance) *
+        (0.12 + pressAmount * 0.14);
+      ball.vy +=
+        ((ball.y - mechanism.y) / distance) *
+        (0.12 + pressAmount * 0.14);
+    }
+    return;
+  }
+
+  if (mechanism.type === "slide") {
+    const angle = mechanism.angle ?? 0;
+    if (
+      pointInRotatedRect(
+        ball,
+        mechanism,
+        mechanism.width ?? 0.17,
+        mechanism.height ?? 0.09,
+        angle,
+      )
+    ) {
+      const strength = mechanism.strength ?? 0.45;
+      ball.vx += Math.cos(angle) * strength * deltaSeconds;
+      ball.vy += Math.sin(angle) * strength * deltaSeconds;
+    }
+    return;
+  }
+
+  const radius = mechanism.radius ?? 0.11;
+  const offsetX = ball.x - mechanism.x;
+  const offsetY = ball.y - mechanism.y;
+  const distance = Math.hypot(offsetX, offsetY);
+  if (distance <= 0.002 || distance >= radius) return;
+  const normalizedX = offsetX / distance;
+  const normalizedY = offsetY / distance;
+  const influence = 1 - distance / radius;
+  const strength = (mechanism.strength ?? 0.3) * influence;
+  const direction = Math.sign(mechanism.speed ?? 1) || 1;
+  ball.vx +=
+    (-normalizedX * strength +
+      -normalizedY * strength * 0.78 * direction) *
+    deltaSeconds;
+  ball.vy +=
+    (-normalizedY * strength +
+      normalizedX * strength * 0.78 * direction) *
+    deltaSeconds;
+}
+
 function updateBallPhysics(
   ball: BallMotion,
   course: MiniGolfCourse,
   deltaSeconds: number,
   timeMs: number,
 ) {
-  const startedInSand = course.sand.some((rect) =>
-    pointInRect(ball.x, ball.y, rect),
+  const startedInSand = course.sand.some((area) =>
+    isMiniGolfPointInArea(ball, area),
   );
   const terrainGradient = getMiniGolfTerrainGradient(
     { x: ball.x, y: ball.y },
@@ -247,61 +421,14 @@ function updateBallPhysics(
     (speedBeforeMove * deltaSeconds) /
     (BALL_RADIUS * CANVAS_WIDTH);
 
-  const minimumX = 0.02 + BALL_RADIUS;
-  const maximumX = 0.98 - BALL_RADIUS;
-  const minimumY = 0.02 + BALL_RADIUS;
-  const maximumY = 0.98 - BALL_RADIUS;
-
-  if (ball.x < minimumX) {
-    if (
-      !isMiniGolfBoundaryProtected(
-        course,
-        "left",
-        ball.y,
-      )
-    ) {
+  if (!isMiniGolfPointInPlayableArea(ball, course)) {
+    const edge = getClosestMiniGolfPlayableEdge(ball, course);
+    if (!isMiniGolfPlayableEdgeGuarded(course, edge.index)) {
       return "out-of-bounds" as const;
     }
-    ball.x = minimumX;
-    bounceVelocity(ball, 1, 0, 0.72);
-  } else if (ball.x > maximumX) {
-    if (
-      !isMiniGolfBoundaryProtected(
-        course,
-        "right",
-        ball.y,
-      )
-    ) {
-      return "out-of-bounds" as const;
-    }
-    ball.x = maximumX;
-    bounceVelocity(ball, -1, 0, 0.72);
-  }
-
-  if (ball.y < minimumY) {
-    if (
-      !isMiniGolfBoundaryProtected(
-        course,
-        "top",
-        ball.x,
-      )
-    ) {
-      return "out-of-bounds" as const;
-    }
-    ball.y = minimumY;
-    bounceVelocity(ball, 0, 1, 0.72);
-  } else if (ball.y > maximumY) {
-    if (
-      !isMiniGolfBoundaryProtected(
-        course,
-        "bottom",
-        ball.x,
-      )
-    ) {
-      return "out-of-bounds" as const;
-    }
-    ball.y = maximumY;
-    bounceVelocity(ball, 0, -1, 0.72);
+    ball.x = edge.closest.x + edge.normal.x * (BALL_RADIUS + 0.003);
+    ball.y = edge.closest.y + edge.normal.y * (BALL_RADIUS + 0.003);
+    bounceVelocity(ball, edge.normal.x, edge.normal.y, 0.72);
   }
 
   for (const obstacle of course.obstacles) {
@@ -334,8 +461,17 @@ function updateBallPhysics(
     }
   }
 
-  const inSand = course.sand.some((rect) =>
-    pointInRect(ball.x, ball.y, rect),
+  for (const mechanism of course.mechanisms) {
+    applyMiniGolfMechanismPhysics(
+      ball,
+      mechanism,
+      deltaSeconds,
+      timeMs,
+    );
+  }
+
+  const inSand = course.sand.some((area) =>
+    isMiniGolfPointInArea(ball, area),
   );
   const friction = inSand ? 0.91 : 0.98;
   const frictionByTime = Math.pow(friction, deltaSeconds * 60);
@@ -1334,120 +1470,35 @@ export default function MiniGolfGame({
       context.restore();
 
       for (const water of currentCourse.water) {
-        const x = water.x * CANVAS_WIDTH;
-        const y = water.y * CANVAS_HEIGHT;
-        const width = water.width * CANVAS_WIDTH;
-        const height = water.height * CANVAS_HEIGHT;
         const waterGradient = context.createLinearGradient(
-          x,
-          y,
-          x,
-          y + height,
+          0,
+          0,
+          CANVAS_WIDTH,
+          CANVAS_HEIGHT,
         );
         waterGradient.addColorStop(0, "#a5f3fc");
-        waterGradient.addColorStop(0.16, "#38bdf8");
-        waterGradient.addColorStop(0.58, "#0284c7");
+        waterGradient.addColorStop(0.5, "#0284c7");
         waterGradient.addColorStop(1, "#082f49");
         context.save();
         context.shadowColor = "rgba(3,105,161,0.78)";
-        context.shadowBlur = 20;
+        context.shadowBlur = 16;
         context.shadowOffsetY = 5;
         context.fillStyle = waterGradient;
-        drawRoundedRect(context, x, y, width, height, 16);
-        context.restore();
-
-        context.save();
-        context.beginPath();
-        context.roundRect(x, y, width, height, 16);
-        context.clip();
-
-        const waterLight = context.createRadialGradient(
-          x + width * 0.25,
-          y + height * 0.08,
-          0,
-          x + width * 0.25,
-          y + height * 0.08,
-          Math.max(width, height) * 0.9,
-        );
-        waterLight.addColorStop(0, "rgba(255,255,255,0.28)");
-        waterLight.addColorStop(0.45, "rgba(125,211,252,0.08)");
-        waterLight.addColorStop(1, "rgba(2,44,71,0.28)");
-        context.fillStyle = waterLight;
-        context.fillRect(x, y, width, height);
-
-        context.strokeStyle = "rgba(224,242,254,0.48)";
-        context.lineWidth = 1.6;
-        const waveOffset = (time / 70) % 20;
-        for (let waveY = y + 12; waveY < y + height; waveY += 19) {
-          context.beginPath();
-          for (
-            let waveX = x - 12 + waveOffset;
-            waveX < x + width - 6;
-            waveX += 20
-          ) {
-            context.moveTo(waveX, waveY);
-            context.quadraticCurveTo(
-              waveX + 5,
-              waveY - 3.5,
-              waveX + 10,
-              waveY,
-            );
-          }
-          context.stroke();
-        }
-
-        context.globalCompositeOperation = "screen";
-        context.strokeStyle = "rgba(165,243,252,0.2)";
-        context.lineWidth = 4;
-        for (let index = 0; index < 7; index += 1) {
-          const rippleX =
-            x +
-            seededNoise(index, currentCourse.id * 33.2) *
-              width;
-          const rippleY =
-            y +
-            seededNoise(index, currentCourse.id * 37.6) *
-              height;
-          const ripple =
-            8 +
-            ((time / 38 + index * 17) %
-              Math.max(20, Math.min(width, height) * 0.7));
-          context.beginPath();
-          context.ellipse(
-            rippleX,
-            rippleY,
-            ripple,
-            ripple * 0.32,
-            0,
-            0,
-            Math.PI * 2,
-          );
-          context.stroke();
-        }
-        context.restore();
-
+        traceMiniGolfArea(context, water);
+        context.fill();
         context.strokeStyle = "rgba(224,242,254,0.8)";
         context.lineWidth = 3;
-        context.beginPath();
-        context.roundRect(x + 1, y + 1, width - 2, height - 2, 15);
+        traceMiniGolfArea(context, water);
         context.stroke();
-        context.strokeStyle = "rgba(3,105,161,0.75)";
-        context.lineWidth = 5;
-        context.beginPath();
-        context.roundRect(x - 2, y - 2, width + 4, height + 4, 18);
-        context.stroke();
+        context.restore();
       }
 
       for (const sand of currentCourse.sand) {
-        const x = sand.x * CANVAS_WIDTH;
-        const y = sand.y * CANVAS_HEIGHT;
-        const width = sand.width * CANVAS_WIDTH;
-        const height = sand.height * CANVAS_HEIGHT;
         const sandGradient = context.createLinearGradient(
-          x,
-          y,
-          x,
-          y + height,
+          0,
+          0,
+          CANVAS_WIDTH,
+          CANVAS_HEIGHT,
         );
         sandGradient.addColorStop(0, "#fff7d6");
         sandGradient.addColorStop(0.34, "#f8d88a");
@@ -1457,62 +1508,12 @@ export default function MiniGolfGame({
         context.shadowColor = "rgba(120,53,15,0.4)";
         context.shadowBlur = 10;
         context.fillStyle = sandGradient;
-        drawRoundedRect(context, x, y, width, height, 20);
-        context.restore();
+        traceMiniGolfArea(context, sand);
+        context.fill();
         context.strokeStyle = "rgba(146,64,14,0.48)";
         context.lineWidth = 3;
-        context.beginPath();
-        context.roundRect(x, y, width, height, 20);
+        traceMiniGolfArea(context, sand);
         context.stroke();
-        context.save();
-        context.beginPath();
-        context.roundRect(x, y, width, height, 20);
-        context.clip();
-        for (let index = 0; index < 140; index += 1) {
-          const grainX =
-            x +
-            seededNoise(index, currentCourse.id * 41.3) * width;
-          const grainY =
-            y +
-            seededNoise(index, currentCourse.id * 47.9) * height;
-          const grainRadius =
-            0.45 +
-            seededNoise(index, currentCourse.id * 51.1) * 1.25;
-          context.fillStyle =
-            index % 4 === 0
-              ? "rgba(255,255,255,0.4)"
-              : index % 3 === 0
-                ? "rgba(120,53,15,0.3)"
-                : "rgba(180,83,9,0.2)";
-          context.beginPath();
-          context.arc(
-            grainX,
-            grainY,
-            grainRadius,
-            0,
-            Math.PI * 2,
-          );
-          context.fill();
-        }
-        context.strokeStyle = "rgba(146,64,14,0.2)";
-        context.lineWidth = 2;
-        for (
-          let rakeY = y + 12;
-          rakeY < y + height;
-          rakeY += 11
-        ) {
-          context.beginPath();
-          context.moveTo(x - 4, rakeY);
-          context.bezierCurveTo(
-            x + width * 0.3,
-            rakeY - 5,
-            x + width * 0.65,
-            rakeY + 5,
-            x + width + 4,
-            rakeY,
-          );
-          context.stroke();
-        }
         context.restore();
       }
 
@@ -1897,8 +1898,8 @@ export default function MiniGolfGame({
           if (boundaryResult === "out-of-bounds") break;
         }
 
-        const inWater = course.water.some((rect) =>
-          pointInRect(ball.x, ball.y, rect),
+        const inWater = course.water.some((area) =>
+          isMiniGolfPointInArea(ball, area),
         );
         const distanceToHole = pixelDistance(
           ball.x,
@@ -1943,8 +1944,8 @@ export default function MiniGolfGame({
           setBallIsSinking(true);
           setNoticeMessage("⛳ Bóng đang rơi xuống lỗ...");
         } else {
-          const inSand = course.sand.some((rect) =>
-            pointInRect(ball.x, ball.y, rect),
+          const inSand = course.sand.some((area) =>
+            isMiniGolfPointInArea(ball, area),
           );
           if (!inSand) {
             ball.lastSafeX = ball.x;

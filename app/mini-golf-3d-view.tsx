@@ -7,9 +7,16 @@ import {
 } from "react";
 import * as THREE from "three";
 import {
+  getMiniGolfAreaOutline,
+  getMiniGolfMechanismAngle,
   getMiniGolfMovingObstaclePose,
+  getMiniGolfPressAmount,
   getMiniGolfTerrainElevation,
+  isMiniGolfPointInArea,
+  isMiniGolfPointInPlayableArea,
+  type MiniGolfArea,
   type MiniGolfCourse,
+  type MiniGolfMechanism,
   type MiniGolfMovingObstacle,
   type MiniGolfPoint,
   type MiniGolfRect,
@@ -99,6 +106,12 @@ type MovingObstacleObject = {
   obstacle: MiniGolfMovingObstacle;
   root: THREE.Group;
   movingPart: THREE.Mesh;
+};
+
+type MechanismObject = {
+  mechanism: MiniGolfMechanism;
+  root: THREE.Group;
+  animatedPart: THREE.Object3D;
 };
 
 type CameraController = {
@@ -415,16 +428,31 @@ function makeTurfAlphaTexture(course: MiniGolfCourse) {
   const context = canvas.getContext("2d");
   if (!context) return null;
 
-  context.fillStyle = "#ffffff";
+  context.fillStyle = "#000000";
   context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#ffffff";
+  context.beginPath();
+  course.playableArea.forEach((point, index) => {
+    const x = point.x * canvas.width;
+    const y = point.y * canvas.height;
+    if (index === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  });
+  context.closePath();
+  context.fill();
+
   context.fillStyle = "#000000";
   for (const water of course.water) {
-    context.fillRect(
-      water.x * canvas.width,
-      water.y * canvas.height,
-      water.width * canvas.width,
-      water.height * canvas.height,
-    );
+    const outline = getMiniGolfAreaOutline(water, 64);
+    context.beginPath();
+    outline.forEach((point, index) => {
+      const x = point.x * canvas.width;
+      const y = point.y * canvas.height;
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.closePath();
+    context.fill();
   }
 
   context.beginPath();
@@ -538,39 +566,128 @@ function addBox(
   return mesh;
 }
 
-function makeRectangularBasinBank(
-  width: number,
-  depth: number,
-  bankWidth: number,
+function getScaledAreaOutline(
+  area: MiniGolfArea,
+  scale = 1,
+) {
+  const outline = getMiniGolfAreaOutline(area, 48);
+  const center = outline.reduce(
+    (total, point) => ({
+      x: total.x + point.x / outline.length,
+      y: total.y + point.y / outline.length,
+    }),
+    { x: 0, y: 0 },
+  );
+  return outline.map((point) => ({
+    x: center.x + (point.x - center.x) * scale,
+    y: center.y + (point.y - center.y) * scale,
+  }));
+}
+
+function makeAreaSurfaceGeometry(
+  area: MiniGolfArea,
+  course: MiniGolfCourse,
+  elevationOffset: number,
+  scale = 1,
+  followTerrain = true,
+) {
+  const outline = getScaledAreaOutline(area, scale);
+  const contour = outline.map(
+    (point) =>
+      new THREE.Vector2(
+        (point.x - 0.5) * WORLD_WIDTH,
+        (point.y - 0.5) * WORLD_DEPTH,
+      ),
+  );
+  const triangles = THREE.ShapeUtils.triangulateShape(contour, []);
+  const center = outline.reduce(
+    (total, point) => ({
+      x: total.x + point.x / outline.length,
+      y: total.y + point.y / outline.length,
+    }),
+    { x: 0, y: 0 },
+  );
+  const flatElevation =
+    GROUND_HEIGHT +
+    getMiniGolfTerrainElevation(center, course) +
+    elevationOffset;
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  for (const point of outline) {
+    positions.push(
+      (point.x - 0.5) * WORLD_WIDTH,
+      followTerrain
+        ? GROUND_HEIGHT +
+            getMiniGolfTerrainElevation(point, course) +
+            elevationOffset
+        : flatElevation,
+      (point.y - 0.5) * WORLD_DEPTH,
+    );
+    uvs.push(point.x * 4, point.y * 4);
+  }
+  const indices = triangles.flatMap((triangle) => triangle);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(positions, 3),
+  );
+  geometry.setAttribute(
+    "uv",
+    new THREE.Float32BufferAttribute(uvs, 2),
+  );
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function makeAreaBasinGeometry(
+  area: MiniGolfArea,
+  course: MiniGolfCourse,
+  innerScale: number,
   drop: number,
 ) {
-  const outer = [
-    [-width / 2, -depth / 2],
-    [width / 2, -depth / 2],
-    [width / 2, depth / 2],
-    [-width / 2, depth / 2],
-  ] as const;
-  const inner = [
-    [-width / 2 + bankWidth, -depth / 2 + bankWidth],
-    [width / 2 - bankWidth, -depth / 2 + bankWidth],
-    [width / 2 - bankWidth, depth / 2 - bankWidth],
-    [-width / 2 + bankWidth, depth / 2 - bankWidth],
-  ] as const;
-  const vertices: number[] = [];
-  for (const [x, z] of outer) vertices.push(x, 0, z);
-  for (const [x, z] of inner) vertices.push(x, -drop, z);
-
+  const outer = getScaledAreaOutline(area, 1);
+  const inner = getScaledAreaOutline(area, innerScale);
+  const center = inner.reduce(
+    (total, point) => ({
+      x: total.x + point.x / inner.length,
+      y: total.y + point.y / inner.length,
+    }),
+    { x: 0, y: 0 },
+  );
+  const innerElevation =
+    GROUND_HEIGHT +
+    getMiniGolfTerrainElevation(center, course) -
+    drop;
+  const positions: number[] = [];
   const indices: number[] = [];
-  for (let side = 0; side < 4; side += 1) {
-    const next = (side + 1) % 4;
-    indices.push(side, next, 4 + next);
-    indices.push(side, 4 + next, 4 + side);
+
+  for (const point of outer) {
+    positions.push(
+      (point.x - 0.5) * WORLD_WIDTH,
+      GROUND_HEIGHT +
+        getMiniGolfTerrainElevation(point, course) +
+        0.015,
+      (point.y - 0.5) * WORLD_DEPTH,
+    );
+  }
+  for (const point of inner) {
+    positions.push(
+      (point.x - 0.5) * WORLD_WIDTH,
+      innerElevation,
+      (point.y - 0.5) * WORLD_DEPTH,
+    );
+  }
+  for (let index = 0; index < outer.length; index += 1) {
+    const next = (index + 1) % outer.length;
+    indices.push(index, next, outer.length + next);
+    indices.push(index, outer.length + next, outer.length + index);
   }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
     "position",
-    new THREE.Float32BufferAttribute(vertices, 3),
+    new THREE.Float32BufferAttribute(positions, 3),
   );
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
@@ -1123,42 +1240,19 @@ export default function MiniGolf3DView({
       polygonOffsetFactor: -1,
     });
     for (const sand of course.sand) {
-      const width = sand.width * WORLD_WIDTH;
-      const depth = sand.height * WORLD_DEPTH;
-      const center = courseToWorld({
-        x: sand.x + sand.width / 2,
-        y: sand.y + sand.height / 2,
-      }, course);
-      const geometry = new THREE.PlaneGeometry(
-        width,
-        depth,
-        16,
-        10,
+      const geometry = makeAreaSurfaceGeometry(
+        sand,
+        course,
+        0.035,
       );
-      geometry.rotateX(-Math.PI / 2);
-      const positions = geometry.attributes
-        .position as THREE.BufferAttribute;
-      for (
-        let index = 0;
-        index < positions.count;
-        index += 1
-      ) {
-        positions.setY(
-          index,
-          (seededNoise(index, course.id * 71.2) - 0.5) *
-            0.04,
-        );
-      }
-      geometry.computeVertexNormals();
       const mesh = new THREE.Mesh(geometry, sandMaterial);
-      mesh.position.set(center.x, center.y + 0.025, center.z);
       mesh.receiveShadow = true;
       scene.add(mesh);
     }
 
     const waterMeshes: Array<{
       mesh: THREE.Mesh<
-        THREE.PlaneGeometry,
+        THREE.BufferGeometry,
         THREE.MeshPhysicalMaterial
       >;
       base: Float32Array;
@@ -1182,50 +1276,39 @@ export default function MiniGolf3DView({
     });
     for (let waterIndex = 0; waterIndex < course.water.length; waterIndex += 1) {
       const water = course.water[waterIndex];
-      const width = water.width * WORLD_WIDTH;
-      const depth = water.height * WORLD_DEPTH;
-      const center = courseToWorld({
-        x: water.x + water.width / 2,
-        y: water.y + water.height / 2,
-      }, course);
-      const bankWidth = Math.max(
-        0.18,
-        Math.min(0.44, width * 0.16, depth * 0.2),
-      );
       const basinDrop = 0.24;
-      const innerWidth = Math.max(0.3, width - bankWidth * 1.7);
-      const innerDepth = Math.max(0.3, depth - bankWidth * 1.7);
-      const waterSurfaceY = center.y - basinDrop + 0.04;
 
       const bank = new THREE.Mesh(
-        makeRectangularBasinBank(
-          width,
-          depth,
-          bankWidth,
+        makeAreaBasinGeometry(
+          water,
+          course,
+          0.84,
           basinDrop,
         ),
         basinBankMaterial,
       );
-      bank.position.set(center.x, center.y + 0.015, center.z);
       bank.receiveShadow = true;
       scene.add(bank);
 
-      addBox(
-        scene,
-        innerWidth,
-        0.1,
-        innerDepth,
-        center.x,
-        waterSurfaceY - 0.11,
-        center.z,
+      const floor = new THREE.Mesh(
+        makeAreaSurfaceGeometry(
+          water,
+          course,
+          -basinDrop - 0.09,
+          0.84,
+          false,
+        ),
         basinFloorMaterial,
       );
+      floor.receiveShadow = true;
+      scene.add(floor);
 
-      const geometry = new THREE.PlaneGeometry(
-        innerWidth,
-        innerDepth,
-        22,
-        14,
+      const geometry = makeAreaSurfaceGeometry(
+        water,
+        course,
+        -basinDrop + 0.055,
+        0.84,
+        false,
       );
       const material = new THREE.MeshPhysicalMaterial({
         color: course.theme === "night" ? "#0ea5e9" : "#38bdf8",
@@ -1241,8 +1324,6 @@ export default function MiniGolf3DView({
         side: THREE.DoubleSide,
       });
       const mesh = new THREE.Mesh(geometry, material);
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(center.x, waterSurfaceY, center.z);
       mesh.receiveShadow = true;
       scene.add(mesh);
       waterMeshes.push({
@@ -1287,28 +1368,25 @@ export default function MiniGolf3DView({
       clearcoat: 0.58,
       clearcoatRoughness: 0.3,
     });
-    for (const rail of course.boundaryRails) {
-      const from = clamp(Math.min(rail.from, rail.to), 0, 1);
-      const to = clamp(Math.max(rail.from, rail.to), 0, 1);
-      const edgeCenter = (from + to) / 2;
-      const isHorizontal =
-        rail.side === "top" || rail.side === "bottom";
-      const coursePoint = isHorizontal
-        ? {
-            x: edgeCenter,
-            y: rail.side === "top" ? 0.02 : 0.98,
-          }
-        : {
-            x: rail.side === "left" ? 0.02 : 0.98,
-            y: edgeCenter,
-          };
-      const center = courseToWorld(coursePoint, course);
-      const width = isHorizontal
-        ? Math.max(0.18, (to - from) * WORLD_WIDTH)
-        : 0.26;
-      const depth = isHorizontal
-        ? 0.26
-        : Math.max(0.18, (to - from) * WORLD_DEPTH);
+    for (const edgeIndex of course.railEdges) {
+      const startPoint = course.playableArea[edgeIndex];
+      const endPoint =
+        course.playableArea[
+          (edgeIndex + 1) % course.playableArea.length
+        ];
+      if (!startPoint || !endPoint) continue;
+      const start = courseToWorld(startPoint, course);
+      const end = courseToWorld(endPoint, course);
+      const centerPoint = {
+        x: (startPoint.x + endPoint.x) / 2,
+        y: (startPoint.y + endPoint.y) / 2,
+      };
+      const center = courseToWorld(centerPoint, course);
+      const width = Math.max(
+        0.2,
+        Math.hypot(end.x - start.x, end.z - start.z),
+      );
+      const depth = 0.25;
       const railHeight = 0.58;
       const mesh = addBox(
         scene,
@@ -1319,6 +1397,10 @@ export default function MiniGolf3DView({
         center.y + railHeight / 2,
         center.z,
         boundaryMaterial,
+      );
+      mesh.rotation.y = -Math.atan2(
+        end.z - start.z,
+        end.x - start.x,
       );
       const edge = new THREE.LineSegments(
         new THREE.EdgesGeometry(mesh.geometry),
@@ -1483,6 +1565,225 @@ export default function MiniGolf3DView({
       });
     }
 
+    const mechanismMetalMaterial =
+      new THREE.MeshPhysicalMaterial({
+        color: course.theme === "night" ? "#9b87f5" : "#475569",
+        roughness: 0.25,
+        metalness: 0.82,
+        clearcoat: 0.58,
+      });
+    const mechanismAccentMaterial =
+      new THREE.MeshPhysicalMaterial({
+        color: course.theme === "night" ? "#22d3ee" : "#f97316",
+        emissive:
+          course.theme === "night" ? "#0891b2" : "#9a3412",
+        emissiveIntensity: 0.32,
+        roughness: 0.34,
+        metalness: 0.42,
+      });
+    const mechanismWarningMaterial =
+      new THREE.MeshStandardMaterial({
+        color: "#fde047",
+        emissive: "#854d0e",
+        emissiveIntensity: 0.18,
+        roughness: 0.48,
+      });
+    const mechanismObjects: MechanismObject[] = [];
+    for (const mechanism of course.mechanisms) {
+      const root = new THREE.Group();
+      const center = courseToWorld(mechanism, course);
+      root.position.copy(center);
+      let animatedPart: THREE.Object3D = root;
+
+      if (mechanism.type === "windmill") {
+        const tower = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.34, 0.58, 1.65, 10),
+          mechanismMetalMaterial,
+        );
+        tower.position.y = 0.83;
+        tower.castShadow = true;
+        root.add(tower);
+
+        const rotor = new THREE.Group();
+        rotor.position.y = 0.43;
+        const armLength =
+          (mechanism.radius ?? 0.12) * WORLD_DEPTH;
+        for (let bladeIndex = 0; bladeIndex < 4; bladeIndex += 1) {
+          const bladeRoot = new THREE.Group();
+          bladeRoot.rotation.y = bladeIndex * (Math.PI / 2);
+          const blade = new THREE.Mesh(
+            new THREE.BoxGeometry(
+              Math.max(0.8, armLength),
+              0.14,
+              0.38,
+            ),
+            bladeIndex % 2 === 0
+              ? mechanismAccentMaterial
+              : mechanismWarningMaterial,
+          );
+          blade.position.x = armLength * 0.5;
+          blade.castShadow = true;
+          bladeRoot.add(blade);
+          rotor.add(bladeRoot);
+        }
+        const hub = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.28, 0.28, 0.24, 18),
+          mechanismWarningMaterial,
+        );
+        hub.rotation.z = Math.PI / 2;
+        hub.castShadow = true;
+        rotor.add(hub);
+        root.add(rotor);
+        animatedPart = rotor;
+      } else if (mechanism.type === "spinner") {
+        const post = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.3, 0.42, 0.55, 16),
+          mechanismMetalMaterial,
+        );
+        post.position.y = 0.28;
+        post.castShadow = true;
+        root.add(post);
+        const rotor = new THREE.Group();
+        rotor.position.y = 0.5;
+        const bar = new THREE.Mesh(
+          new THREE.BoxGeometry(
+            (mechanism.length ?? 0.24) * WORLD_WIDTH,
+            0.24,
+            Math.max(0.28, (mechanism.width ?? 0.022) * WORLD_DEPTH),
+          ),
+          mechanismAccentMaterial,
+        );
+        bar.castShadow = true;
+        rotor.add(bar);
+        for (const direction of [-1, 1]) {
+          const bumper = new THREE.Mesh(
+            new THREE.SphereGeometry(0.28, 18, 12),
+            mechanismWarningMaterial,
+          );
+          bumper.position.x =
+            direction *
+            (mechanism.length ?? 0.24) *
+            WORLD_WIDTH *
+            0.49;
+          rotor.add(bumper);
+        }
+        root.add(rotor);
+        animatedPart = rotor;
+      } else if (mechanism.type === "press") {
+        const width = (mechanism.width ?? 0.1) * WORLD_WIDTH;
+        const depth = (mechanism.height ?? 0.13) * WORLD_DEPTH;
+        for (const direction of [-1, 1]) {
+          const support = new THREE.Mesh(
+            new THREE.BoxGeometry(0.24, 2.2, 0.3),
+            mechanismMetalMaterial,
+          );
+          support.position.set(
+            direction * (width / 2 + 0.2),
+            1.1,
+            0,
+          );
+          support.castShadow = true;
+          root.add(support);
+        }
+        const cap = new THREE.Mesh(
+          new THREE.BoxGeometry(width + 0.75, 0.28, 0.48),
+          mechanismMetalMaterial,
+        );
+        cap.position.y = 2.15;
+        cap.castShadow = true;
+        root.add(cap);
+        const head = new THREE.Mesh(
+          new THREE.BoxGeometry(width, 0.58, depth),
+          mechanismAccentMaterial,
+        );
+        head.position.y = 1.25;
+        head.castShadow = true;
+        head.receiveShadow = true;
+        const stripe = new THREE.Mesh(
+          new THREE.BoxGeometry(width * 0.82, 0.08, depth + 0.02),
+          mechanismWarningMaterial,
+        );
+        stripe.position.y = -0.3;
+        head.add(stripe);
+        root.add(head);
+        animatedPart = head;
+      } else if (mechanism.type === "slide") {
+        const width = (mechanism.width ?? 0.17) * WORLD_WIDTH;
+        const depth = (mechanism.height ?? 0.09) * WORLD_DEPTH;
+        const ramp = new THREE.Mesh(
+          new THREE.BoxGeometry(width, 0.3, depth, 8, 2, 4),
+          mechanismAccentMaterial,
+        );
+        ramp.rotation.z = -0.11;
+        ramp.position.y = 0.28;
+        ramp.castShadow = true;
+        ramp.receiveShadow = true;
+        root.rotation.y = -(mechanism.angle ?? 0);
+        root.add(ramp);
+        for (const direction of [-1, 1]) {
+          const rail = new THREE.Mesh(
+            new THREE.BoxGeometry(width, 0.26, 0.12),
+            mechanismWarningMaterial,
+          );
+          rail.position.set(0, 0.48, direction * depth * 0.46);
+          rail.castShadow = true;
+          root.add(rail);
+        }
+        const arrow = new THREE.Mesh(
+          new THREE.ConeGeometry(0.34, 0.8, 3),
+          new THREE.MeshBasicMaterial({ color: "#ffffff" }),
+        );
+        arrow.rotation.z = -Math.PI / 2;
+        arrow.position.y = 0.48;
+        root.add(arrow);
+      } else {
+        const vortex = new THREE.Group();
+        const radius = (mechanism.radius ?? 0.11) * WORLD_DEPTH;
+        const pool = new THREE.Mesh(
+          new THREE.CircleGeometry(radius, 48),
+          new THREE.MeshPhysicalMaterial({
+            color: course.theme === "night" ? "#7c3aed" : "#0284c7",
+            emissive:
+              course.theme === "night" ? "#4c1d95" : "#075985",
+            emissiveIntensity: 0.42,
+            transparent: true,
+            opacity: 0.72,
+            roughness: 0.08,
+            metalness: 0.18,
+            side: THREE.DoubleSide,
+          }),
+        );
+        pool.rotation.x = -Math.PI / 2;
+        pool.position.y = 0.05;
+        vortex.add(pool);
+        for (let ringIndex = 0; ringIndex < 4; ringIndex += 1) {
+          const ring = new THREE.Mesh(
+            new THREE.TorusGeometry(
+              radius * (0.25 + ringIndex * 0.18),
+              0.045,
+              8,
+              40,
+            ),
+            ringIndex % 2 === 0
+              ? mechanismWarningMaterial
+              : mechanismAccentMaterial,
+          );
+          ring.rotation.x = Math.PI / 2;
+          ring.position.y = 0.1 + ringIndex * 0.025;
+          vortex.add(ring);
+        }
+        root.add(vortex);
+        animatedPart = vortex;
+      }
+
+      scene.add(root);
+      mechanismObjects.push({
+        mechanism,
+        root,
+        animatedPart,
+      });
+    }
+
     const bladeGeometry = new THREE.ConeGeometry(
       0.014,
       0.09,
@@ -1508,12 +1809,20 @@ export default function MiniGolf3DView({
     ) {
       const x = 0.045 + seededNoise(index, course.id * 83.3) * 0.91;
       const y = 0.045 + seededNoise(index, course.id * 89.7) * 0.91;
-      const blocked = [
-        ...course.water,
-        ...course.sand,
-        ...course.obstacles,
-      ].some((rect) => pointInRect(x, y, rect));
-      if (blocked) continue;
+      const point = { x, y };
+      const blockedArea = [...course.water, ...course.sand].some(
+        (area) => isMiniGolfPointInArea(point, area),
+      );
+      const blockedObstacle = course.obstacles.some((rect) =>
+        pointInRect(x, y, rect),
+      );
+      if (
+        blockedArea ||
+        blockedObstacle ||
+        !isMiniGolfPointInPlayableArea(point, course)
+      ) {
+        continue;
+      }
       const world = courseToWorld({ x, y }, course);
       dummy.position.set(
         world.x,
@@ -2123,12 +2432,13 @@ export default function MiniGolf3DView({
         ) {
           const baseX = water.base[index * 3];
           const baseY = water.base[index * 3 + 1];
+          const baseZ = water.base[index * 3 + 2];
           const wave =
             Math.sin(baseX * 2.2 + elapsed * 2.4 + water.phase) *
               0.035 +
-            Math.cos(baseY * 3.1 - elapsed * 1.8 + water.phase) *
+            Math.cos(baseZ * 3.1 - elapsed * 1.8 + water.phase) *
               0.022;
-          positions.setZ(index, wave);
+          positions.setY(index, baseY + wave);
         }
         positions.needsUpdate = true;
         if (frame % 3 === 0) {
@@ -2160,6 +2470,30 @@ export default function MiniGolf3DView({
             elapsed * 1.8 * spinDirection;
           movingObject.movingPart.rotation.x =
             elapsed * 1.15;
+        }
+      }
+
+      for (const mechanismObject of mechanismObjects) {
+        const { mechanism, animatedPart } = mechanismObject;
+        if (
+          mechanism.type === "windmill" ||
+          mechanism.type === "spinner"
+        ) {
+          animatedPart.rotation.y = -getMiniGolfMechanismAngle(
+            mechanism,
+            synchronizedTime,
+          );
+        } else if (mechanism.type === "press") {
+          const amount = getMiniGolfPressAmount(
+            mechanism,
+            synchronizedTime,
+          );
+          animatedPart.position.y = 0.36 + (1 - amount) * 1.35;
+        } else if (mechanism.type === "vortex") {
+          animatedPart.rotation.y =
+            elapsed * (mechanism.speed ?? 1);
+          animatedPart.position.y =
+            Math.sin(elapsed * 2.4) * 0.035;
         }
       }
 
