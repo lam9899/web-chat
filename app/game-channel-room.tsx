@@ -11,6 +11,7 @@ import MemberBadge, {
 } from "@/components/member-badge";
 import { createClient } from "@/utils/supabase/client";
 import ChannelVoiceRoom from "./channel-voice-room";
+import MiniGolf2DGame from "./mini-golf-2d-game";
 import MiniGolfGame from "./mini-golf-game";
 
 const supabase = createClient();
@@ -83,6 +84,8 @@ const GAME_BACKGROUNDS: Record<string, string> = {
     "from-orange-500 via-red-500 to-fuchsia-700",
   "mini-golf":
     "from-emerald-400 via-green-600 to-cyan-800",
+  "mini-golf-2d":
+    "from-cyan-400 via-indigo-600 to-fuchsia-800",
   "eight-ball":
     "from-sky-400 via-blue-700 to-indigo-950",
   fighting:
@@ -679,6 +682,12 @@ export default function GameChannelRoom({
           {selectedGame ? (
             selectedGame.game_key === "mini-golf" ? (
               <MiniGolfGame
+                channelId={channelId}
+                currentUserId={currentUserId}
+                onMatchChange={loadLobby}
+              />
+            ) : selectedGame.game_key === "mini-golf-2d" ? (
+              <MiniGolf2DGame
                 channelId={channelId}
                 currentUserId={currentUserId}
                 onMatchChange={loadLobby}
