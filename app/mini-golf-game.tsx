@@ -2460,6 +2460,73 @@ export default function MiniGolfGame({
           className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
           aria-hidden="true"
         />
+        <aside
+          aria-label={`Số gậy của người chơi tại hố ${viewedHole}`}
+          className="pointer-events-none absolute bottom-14 right-3 top-3 z-10 flex w-36 flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-950/45 text-white/90 opacity-70 shadow-xl backdrop-blur-[3px] sm:w-44"
+        >
+          <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-black/15 px-2 py-1.5 text-[9px] font-black uppercase tracking-wide text-white/70">
+            <span>Hố {viewedHole}</span>
+            <span>Số gậy</span>
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden p-1">
+            {rankedPlayers.map((player) => {
+              const completedScore =
+                player.hole_scores[viewedHole - 1];
+              const isPlayingViewedHole =
+                player.current_hole === viewedHole;
+              const displayedStrokes =
+                typeof completedScore === "number"
+                  ? completedScore
+                  : isPlayingViewedHole
+                    ? player.hole_strokes
+                    : null;
+
+              return (
+                <div
+                  key={player.id}
+                  title={`${player.username}: ${
+                    displayedStrokes === null
+                      ? "chưa đến hố này"
+                      : `${displayedStrokes} gậy`
+                  }`}
+                  className={`mb-px flex h-6 items-center gap-1.5 rounded-md px-1.5 ${
+                    player.id === currentUserId
+                      ? "bg-indigo-400/25 ring-1 ring-indigo-300/30"
+                      : "bg-white/[0.04]"
+                  }`}
+                >
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-full bg-indigo-500/80 text-[7px] font-black">
+                    {player.avatar_url ? (
+                      <img
+                        src={player.avatar_url}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      player.username.charAt(0).toUpperCase()
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[9px] font-bold">
+                    {player.username}
+                  </span>
+                  <span
+                    className={`min-w-6 shrink-0 text-right text-[11px] font-black ${
+                      typeof completedScore === "number"
+                        ? "text-emerald-300"
+                        : displayedStrokes === null
+                          ? "text-white/35"
+                          : "text-amber-200"
+                    }`}
+                  >
+                    {player.player_status === "dnf"
+                      ? "×"
+                      : (displayedStrokes ?? "—")}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </aside>
         {isAiming && aimOrigin && aimPoint && (
           <div className="pointer-events-none absolute bottom-3 right-3 z-20 w-36 rounded-xl border border-white/15 bg-slate-950/90 px-3 py-2 shadow-2xl backdrop-blur">
             <div className="mb-1 flex items-center justify-between text-[11px] font-black">
@@ -2482,6 +2549,11 @@ export default function MiniGolfGame({
                 style={{ width: `${aimPower * 100}%` }}
               />
             </div>
+          </div>
+        )}
+        {currentPlayer?.player_status === "playing" && (
+          <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 max-w-[48%] -translate-x-1/2 truncate rounded-full border border-white/10 bg-slate-950/55 px-3 py-1.5 text-center text-[10px] font-semibold text-white/75 shadow-lg backdrop-blur-sm">
+            {working ? "Đang lưu kết quả..." : noticeMessage}
           </div>
         )}
         {!currentPlayer && (
@@ -2552,82 +2624,6 @@ export default function MiniGolfGame({
             </div>
           </div>
         )}
-      </div>
-
-      <div className="border-t border-white/10 bg-[#0f172a] px-4 py-3">
-        <p className="text-center text-xs font-semibold text-gray-300">
-          {working ? "Đang lưu kết quả..." : noticeMessage}
-        </p>
-
-        {currentPlayer && (
-          <div className="mt-3 grid grid-cols-9 gap-1">
-            {Array.from(
-              { length: match.hole_count },
-              (_, index) => {
-                const score = currentPlayer.hole_scores[index];
-                const active =
-                  currentPlayer.player_status === "playing" &&
-                  currentPlayer.current_hole === index + 1;
-                return (
-                  <div
-                    key={index}
-                    className={`rounded-lg border px-1 py-2 text-center ${
-                      active
-                        ? "border-amber-400 bg-amber-500/15"
-                        : "border-white/10 bg-white/5"
-                    }`}
-                  >
-                    <span className="block text-[9px] text-gray-500">
-                      H{index + 1}
-                    </span>
-                    <span className="block text-xs font-black">
-                      {score ?? (active ? currentPlayer.hole_strokes : "—")}
-                    </span>
-                  </div>
-                );
-              },
-            )}
-          </div>
-        )}
-
-        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-          {rankedPlayers.map((player) => (
-            <div
-              key={player.id}
-              className={`flex min-w-[150px] items-center gap-2 rounded-xl border p-2 ${
-                player.id === currentUserId
-                  ? "border-indigo-400 bg-indigo-500/15"
-                  : "border-white/10 bg-white/5"
-              }`}
-            >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-xs font-black">
-                {player.avatar_url ? (
-                  <img
-                    src={player.avatar_url}
-                    alt={player.username}
-                    className="h-full w-full rounded-full object-cover"
-                  />
-                ) : (
-                  player.username.charAt(0).toUpperCase()
-                )}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[11px] font-black">
-                  {player.username}
-                </span>
-                <span className="block text-[9px] text-gray-400">
-                  {player.player_status === "dnf"
-                    ? "Bỏ cuộc"
-                    : player.player_status === "finished"
-                      ? `${player.total_strokes} gậy · Xong`
-                      : player.hole_completed
-                        ? `Hố ${player.current_hole} · Đã xong, đang chờ`
-                        : `Hố ${player.current_hole} · Đang đánh · ${player.total_strokes} gậy`}
-                </span>
-              </span>
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   );
