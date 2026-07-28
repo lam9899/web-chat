@@ -89,6 +89,17 @@ type BallMotion = {
   lastSafeY: number;
 };
 
+type BallResumeSnapshot = {
+  version: 1;
+  matchId: string;
+  hole: number;
+  holeStrokes: number;
+  savedAt: number;
+  shotElapsedMs: number;
+  sinkElapsedMs: number;
+  ball: Omit<BallMotion, "sinkStartedAt">;
+};
+
 type AimPoint = MiniGolfPoint;
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -498,6 +509,7 @@ export default function MiniGolfGame({
   const shotResolvingRef = useRef(false);
   const shotStartedAtRef = useRef(0);
   const timeoutSubmittedRef = useRef("");
+  const restoredMotionKeyRef = useRef("");
   const [match, setMatch] = useState<MiniGolfMatch | null>(
     null,
   );
@@ -521,6 +533,16 @@ export default function MiniGolfGame({
     dismissedWaitingOverlayKey,
     setDismissedWaitingOverlayKey,
   ] = useState<string | null>(null);
+  const resumeStorageKey =
+    `talkcunglamdz:minigolf:${channelId}:${currentUserId}`;
+
+  const clearResumeSnapshot = useCallback(() => {
+    try {
+      window.sessionStorage.removeItem(resumeStorageKey);
+    } catch {
+      // Trinh duyet co the chan storage; du lieu tren server van duoc giu.
+    }
+  }, [resumeStorageKey]);
 
   const loadMatch = useCallback(async () => {
     const [
@@ -587,10 +609,29 @@ export default function MiniGolfGame({
       () => void loadMatch(),
       5_000,
     );
+    const handlePageShow = () => {
+      void loadMatch();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void loadMatch();
+      }
+    };
+
+    window.addEventListener("pageshow", handlePageShow);
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange,
+    );
 
     return () => {
       window.clearTimeout(initialTimer);
       window.clearInterval(refreshTimer);
+      window.removeEventListener("pageshow", handlePageShow);
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange,
+      );
       void supabase.removeChannel(realtime);
     };
   }, [channelId, loadMatch, onMatchChange]);
@@ -661,6 +702,81 @@ export default function MiniGolfGame({
       return;
     }
 
+    const motionKey = match
+      ? `${match.match_id}:${currentPlayer.current_hole}:${currentPlayer.hole_strokes}`
+      : "";
+
+    if (
+      match?.status === "playing" &&
+      restoredMotionKeyRef.current !== motionKey
+    ) {
+      restoredMotionKeyRef.current = motionKey;
+
+      try {
+        const rawSnapshot =
+          window.sessionStorage.getItem(resumeStorageKey);
+        const snapshot = rawSnapshot
+          ? (JSON.parse(rawSnapshot) as BallResumeSnapshot)
+          : null;
+        const snapshotAge = snapshot
+          ? Date.now() - snapshot.savedAt
+          : Number.POSITIVE_INFINITY;
+        const snapshotBall = snapshot?.ball;
+        const validBall = Boolean(
+          snapshotBall &&
+            Number.isFinite(snapshotBall.x) &&
+            Number.isFinite(snapshotBall.y) &&
+            Number.isFinite(snapshotBall.vx) &&
+            Number.isFinite(snapshotBall.vy) &&
+            Number.isFinite(snapshotBall.lastSafeX) &&
+            Number.isFinite(snapshotBall.lastSafeY),
+        );
+
+        if (
+          snapshot?.version === 1 &&
+          snapshot.matchId === match.match_id &&
+          snapshot.hole === currentPlayer.current_hole &&
+          snapshot.holeStrokes === currentPlayer.hole_strokes &&
+          snapshotAge >= 0 &&
+          snapshotAge <= 30_000 &&
+          validBall &&
+          snapshotBall &&
+          (snapshotBall.moving || snapshotBall.sinking)
+        ) {
+          const restoredNow = performance.now();
+          ballRef.current = {
+            ...snapshotBall,
+            sinkStartedAt: snapshotBall.sinking
+              ? restoredNow -
+                Math.max(
+                  0,
+                  snapshot.sinkElapsedMs + snapshotAge,
+                )
+              : 0,
+          };
+          shotStartedAtRef.current =
+            restoredNow -
+            Math.max(
+              0,
+              snapshot.shotElapsedMs + snapshotAge,
+            );
+          window.setTimeout(() => {
+            setBallIsSinking(snapshotBall.sinking);
+            setNoticeMessage(
+              "Đã khôi phục cú đánh đang dở sau khi tải lại trang.",
+            );
+          }, 0);
+          return;
+        }
+
+        if (rawSnapshot) {
+          window.sessionStorage.removeItem(resumeStorageKey);
+        }
+      } catch {
+        clearResumeSnapshot();
+      }
+    }
+
     const nextX = currentPlayer.ball_x ?? course.start.x;
     const nextY = currentPlayer.ball_y ?? course.start.y;
     ballRef.current = {
@@ -679,8 +795,80 @@ export default function MiniGolfGame({
   }, [
     course.start.x,
     course.start.y,
+    clearResumeSnapshot,
     currentPlayer,
+    match,
+    resumeStorageKey,
     working,
+  ]);
+
+  useEffect(() => {
+    if (
+      match?.status !== "playing" ||
+      !currentPlayer ||
+      currentPlayer.player_status !== "playing" ||
+      currentPlayer.hole_completed
+    ) {
+      clearResumeSnapshot();
+      return;
+    }
+
+    const saveMovingBall = () => {
+      const ball = ballRef.current;
+      if (!ball.moving && !ball.sinking) return;
+
+      const currentTime = performance.now();
+      const snapshot: BallResumeSnapshot = {
+        version: 1,
+        matchId: match.match_id,
+        hole: currentPlayer.current_hole,
+        holeStrokes: currentPlayer.hole_strokes,
+        savedAt: Date.now(),
+        shotElapsedMs: Math.max(
+          0,
+          currentTime - shotStartedAtRef.current,
+        ),
+        sinkElapsedMs: ball.sinking
+          ? Math.max(0, currentTime - ball.sinkStartedAt)
+          : 0,
+        ball: {
+          x: ball.x,
+          y: ball.y,
+          vx: ball.vx,
+          vy: ball.vy,
+          moving: ball.moving,
+          rotation: ball.rotation,
+          sinking: ball.sinking,
+          lastSafeX: ball.lastSafeX,
+          lastSafeY: ball.lastSafeY,
+        },
+      };
+
+      try {
+        window.sessionStorage.setItem(
+          resumeStorageKey,
+          JSON.stringify(snapshot),
+        );
+      } catch {
+        // Neu storage bi chan, trang van khoi phuc tu du lieu Supabase.
+      }
+    };
+
+    const snapshotTimer = window.setInterval(
+      saveMovingBall,
+      200,
+    );
+    window.addEventListener("pagehide", saveMovingBall);
+
+    return () => {
+      window.clearInterval(snapshotTimer);
+      window.removeEventListener("pagehide", saveMovingBall);
+    };
+  }, [
+    clearResumeSnapshot,
+    currentPlayer,
+    match,
+    resumeStorageKey,
   ]);
 
   const remainingSeconds = currentPlayer
@@ -729,6 +917,7 @@ export default function MiniGolfGame({
         setErrorMessage(error.message);
         setNoticeMessage("Không thể lưu cú đánh. Hãy thử lại.");
       } else {
+        clearResumeSnapshot();
         setErrorMessage("");
         setNoticeMessage(
           holed
@@ -745,7 +934,12 @@ export default function MiniGolfGame({
       shotResolvingRef.current = false;
       setWorking(false);
     },
-    [activePlayerCount, channelId, loadAfterAction],
+    [
+      activePlayerCount,
+      channelId,
+      clearResumeSnapshot,
+      loadAfterAction,
+    ],
   );
 
   const skipHole = useCallback(async () => {
@@ -758,6 +952,7 @@ export default function MiniGolfGame({
     if (error) {
       setErrorMessage(error.message);
     } else {
+      clearResumeSnapshot();
       setNoticeMessage(
         activePlayerCount <= 1
           ? "Hết thời gian: hố được tính 12 gậy. Đang mở hố tiếp theo."
@@ -766,7 +961,12 @@ export default function MiniGolfGame({
       await loadAfterAction();
     }
     setWorking(false);
-  }, [activePlayerCount, channelId, loadAfterAction]);
+  }, [
+    activePlayerCount,
+    channelId,
+    clearResumeSnapshot,
+    loadAfterAction,
+  ]);
 
   useEffect(() => {
     if (

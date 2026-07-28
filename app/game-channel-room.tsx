@@ -226,9 +226,26 @@ export default function GameChannelRoom({
     onSummaryChange?.(nextSummary);
   }, [channelId, onSummaryChange, serverId]);
 
+  const restoreLobbySession = useCallback(async () => {
+    const { error: restoreError } = await supabase.rpc(
+      "resume_game_channel_session",
+      {
+        p_channel_id: channelId,
+      },
+    );
+
+    await loadLobby();
+
+    if (restoreError) {
+      setErrorMessage(
+        `Không thể khôi phục phiên phòng game: ${restoreError.message}`,
+      );
+    }
+  }, [channelId, loadLobby]);
+
   useEffect(() => {
     const initialTimer = window.setTimeout(
-      () => void loadLobby(),
+      () => void restoreLobbySession(),
       0,
     );
 
@@ -266,17 +283,35 @@ export default function GameChannelRoom({
       )
       .subscribe();
 
-    const refreshTimer = window.setInterval(
-      () => void loadLobby(),
-      20_000,
+    const refreshTimer = window.setInterval(() => {
+      void restoreLobbySession();
+    }, 20_000);
+    const handlePageShow = () => {
+      void restoreLobbySession();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void restoreLobbySession();
+      }
+    };
+
+    window.addEventListener("pageshow", handlePageShow);
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange,
     );
 
     return () => {
       window.clearTimeout(initialTimer);
       window.clearInterval(refreshTimer);
+      window.removeEventListener("pageshow", handlePageShow);
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange,
+      );
       void supabase.removeChannel(realtime);
     };
-  }, [channelId, loadLobby]);
+  }, [channelId, loadLobby, restoreLobbySession]);
 
   const currentPlayer = useMemo(
     () =>
@@ -284,18 +319,6 @@ export default function GameChannelRoom({
       null,
     [currentUserId, players],
   );
-
-  useEffect(() => {
-    if (!currentPlayer) return;
-
-    const heartbeatTimer = window.setInterval(() => {
-      void supabase.rpc("heartbeat_game_channel", {
-        p_channel_id: channelId,
-      });
-    }, 30_000);
-
-    return () => window.clearInterval(heartbeatTimer);
-  }, [channelId, currentPlayer]);
 
   const selectedGame = useMemo(
     () =>
