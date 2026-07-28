@@ -200,6 +200,11 @@ export default function GameChannelRoom({
 
     setCatalog(nextCatalog);
     setSummary(nextSummary);
+    if (nextSummary.status === "playing") {
+      setSelectedSeatIndex(null);
+      setShowFriendPicker(false);
+      setShowGamePicker(false);
+    }
     setPlayers((playerRows ?? []) as GamePlayer[]);
     setSeatInvites(
       inviteError
@@ -378,7 +383,13 @@ export default function GameChannelRoom({
   }, [showGamePicker]);
 
   async function chooseGame(gameKey: string) {
-    if (!canManage || working) return;
+    if (
+      !canManage ||
+      working ||
+      summary?.status === "playing"
+    ) {
+      return;
+    }
 
     const game = catalog.find(
       (item) => item.game_key === gameKey,
@@ -420,7 +431,13 @@ export default function GameChannelRoom({
   }
 
   async function joinGame(seatIndex?: number) {
-    if (working || !selectedGame) return;
+    if (
+      working ||
+      !selectedGame ||
+      summary?.status === "playing"
+    ) {
+      return;
+    }
     setWorking(true);
     setErrorMessage("");
 
@@ -441,7 +458,13 @@ export default function GameChannelRoom({
   }
 
   async function moveToSeat(seatIndex: number) {
-    if (!currentPlayer || working) return;
+    if (
+      !currentPlayer ||
+      working ||
+      summary?.status === "playing"
+    ) {
+      return;
+    }
     setWorking(true);
     setErrorMessage("");
 
@@ -462,7 +485,13 @@ export default function GameChannelRoom({
   }
 
   async function inviteFriend(friendId: string) {
-    if (selectedSeatIndex === null || working) return;
+    if (
+      selectedSeatIndex === null ||
+      working ||
+      summary?.status === "playing"
+    ) {
+      return;
+    }
     setWorking(true);
     setErrorMessage("");
 
@@ -523,7 +552,7 @@ export default function GameChannelRoom({
   }
 
   async function leaveGame() {
-    if (working) return;
+    if (working || summary?.status === "playing") return;
     setWorking(true);
     setErrorMessage("");
 
@@ -540,7 +569,14 @@ export default function GameChannelRoom({
   }
 
   async function toggleReady() {
-    if (!currentPlayer || working) return;
+    if (
+      !currentPlayer ||
+      currentPlayer.seat_index === 0 ||
+      working ||
+      summary?.status === "playing"
+    ) {
+      return;
+    }
     setWorking(true);
     setErrorMessage("");
 
@@ -570,11 +606,15 @@ export default function GameChannelRoom({
   );
   const maximumPlayers = summary?.max_players ?? null;
   const isRoomHost = currentPlayer?.seat_index === 0;
+  const isRoomLocked = summary?.status === "playing";
+  const guestPlayers = players.filter(
+    (player) => player.seat_index !== 0,
+  );
   const canStartGame =
     isRoomHost &&
-    players.length >= 2 &&
-    players.every((player) => player.is_ready) &&
-    summary?.status !== "playing";
+    players.length >= 1 &&
+    guestPlayers.every((player) => player.is_ready) &&
+    !isRoomLocked;
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
@@ -598,7 +638,13 @@ export default function GameChannelRoom({
           <button
             type="button"
             onClick={() => setShowGamePicker(true)}
-            className="rounded-xl bg-indigo-500 px-4 py-2.5 font-black text-white transition hover:bg-indigo-400"
+            disabled={working || isRoomLocked}
+            title={
+              isRoomLocked
+                ? "Không thể đổi game khi trận đang diễn ra"
+                : "Mở thư viện game"
+            }
+            className="rounded-xl bg-indigo-500 px-4 py-2.5 font-black text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-45"
           >
             🎮 Chọn game
           </button>
@@ -611,12 +657,12 @@ export default function GameChannelRoom({
                   onClick={() => void startGame()}
                   disabled={working || !canStartGame}
                   title={
-                    players.length < 2
-                      ? "Cần ít nhất 2 người"
-                      : !players.every(
+                    isRoomLocked
+                      ? "Trận đấu đang diễn ra"
+                      : !guestPlayers.every(
                             (player) => player.is_ready,
                           )
-                        ? "Tất cả người chơi phải sẵn sàng"
+                        ? "Tất cả người chơi khác phải sẵn sàng"
                         : "Bắt đầu trò chơi"
                   }
                   className="rounded-xl bg-amber-500 px-4 py-2.5 font-black text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-45"
@@ -626,28 +672,36 @@ export default function GameChannelRoom({
                     : "▶ Bắt đầu trò chơi"}
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => void toggleReady()}
-                disabled={working}
-                className={`rounded-xl px-4 py-2.5 font-black disabled:opacity-50 ${
-                  currentPlayer.is_ready
-                    ? "bg-green-600 hover:bg-green-500"
-                    : "bg-indigo-500 hover:bg-indigo-400"
-                }`}
-              >
-                {currentPlayer.is_ready
-                  ? "✓ Đã sẵn sàng"
-                  : "Sẵn sàng"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void leaveGame()}
-                disabled={working}
-                className="rounded-xl bg-red-500/15 px-4 py-2.5 font-bold text-red-300 hover:bg-red-500/25 disabled:opacity-50"
-              >
-                Rời phòng
-              </button>
+              {!isRoomHost && !isRoomLocked && (
+                <button
+                  type="button"
+                  onClick={() => void toggleReady()}
+                  disabled={working}
+                  className={`rounded-xl px-4 py-2.5 font-black disabled:opacity-50 ${
+                    currentPlayer.is_ready
+                      ? "bg-green-600 hover:bg-green-500"
+                      : "bg-indigo-500 hover:bg-indigo-400"
+                  }`}
+                >
+                  {currentPlayer.is_ready
+                    ? "✓ Đã sẵn sàng"
+                    : "Sẵn sàng"}
+                </button>
+              )}
+              {isRoomLocked ? (
+                <span className="rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-2.5 font-black text-amber-200">
+                  🔒 Phòng đã khóa
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void leaveGame()}
+                  disabled={working}
+                  className="rounded-xl bg-red-500/15 px-4 py-2.5 font-bold text-red-300 hover:bg-red-500/25 disabled:opacity-50"
+                >
+                  Rời phòng
+                </button>
+              )}
             </>
           )}
         </div>
@@ -749,11 +803,19 @@ export default function GameChannelRoom({
                 {selectedGame.name}
               </h2>
               <p className="mt-1 text-xs text-gray-400">
-                Ô số 1 là chủ phòng · Bấm dấu + để tham gia
-                hoặc mời bạn bè
+                {isRoomLocked
+                  ? "🔒 Trận đang diễn ra · Danh sách người chơi được giữ nguyên cho đến khi kết thúc"
+                  : "Ô số 1 là chủ phòng · Bấm dấu + để tham gia hoặc mời bạn bè"}
               </p>
             </div>
-            <span className="rounded-full bg-green-500/15 px-3 py-1 text-xs font-black text-green-300">
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-black ${
+                isRoomLocked
+                  ? "bg-amber-500/15 text-amber-200"
+                  : "bg-green-500/15 text-green-300"
+              }`}
+            >
+              {isRoomLocked ? "🔒 " : ""}
               {players.length}/{maximumPlayers} người
             </span>
           </div>
@@ -810,15 +872,15 @@ export default function GameChannelRoom({
                       </span>
                       <span
                         className={`mt-1 text-[10px] font-bold ${
-                          player.is_ready
+                          isRoomLocked || player.is_ready
                             ? "text-green-300"
                             : "text-gray-500"
                         }`}
                       >
-                        {seatIndex === 0
-                          ? player.is_ready
-                            ? "Chủ phòng · Sẵn sàng"
-                            : "Chủ phòng · Chưa sẵn sàng"
+                        {isRoomLocked
+                          ? "Đang thi đấu"
+                          : seatIndex === 0
+                            ? "Chủ phòng"
                           : player.is_ready
                             ? "Đã sẵn sàng"
                             : "Chưa sẵn sàng"}
@@ -859,7 +921,7 @@ export default function GameChannelRoom({
                         Đã được mời
                       </span>
 
-                      {isMyInvite && (
+                      {isMyInvite && !isRoomLocked && (
                         <span className="mt-2 flex gap-1">
                           <button
                             type="button"
@@ -902,18 +964,18 @@ export default function GameChannelRoom({
                       setShowFriendPicker(false);
                       setErrorMessage("");
                     }}
-                    disabled={working}
+                    disabled={working || isRoomLocked}
                     title={`Ô chờ ${seatIndex + 1}`}
-                    className="group relative flex min-h-32 flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 bg-[#2b2d31]/60 p-3 transition hover:border-indigo-400 hover:bg-indigo-500/10 disabled:opacity-50"
+                    className="group relative flex min-h-32 flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 bg-[#2b2d31]/60 p-3 transition hover:border-indigo-400 hover:bg-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <span className="absolute right-2 top-2 text-[10px] font-black text-gray-600">
                       {seatIndex + 1}
                     </span>
                     <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/5 text-3xl text-gray-500 transition group-hover:bg-indigo-500 group-hover:text-white">
-                      +
+                      {isRoomLocked ? "🔒" : "+"}
                     </span>
                     <span className="mt-2 text-[10px] font-bold text-gray-500 group-hover:text-indigo-200">
-                      Ô trống
+                      {isRoomLocked ? "Đã khóa" : "Ô trống"}
                     </span>
                   </button>
                 );
@@ -930,7 +992,7 @@ export default function GameChannelRoom({
         compact
       />
 
-      {showGamePicker && (
+      {showGamePicker && !isRoomLocked && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6">
           <button
             type="button"
@@ -1012,7 +1074,9 @@ export default function GameChannelRoom({
                         onClick={() =>
                           void chooseGame(game.game_key)
                         }
-                        disabled={!canManage || working}
+                        disabled={
+                          !canManage || working || isRoomLocked
+                        }
                         title={
                           canManage
                             ? active
@@ -1081,7 +1145,7 @@ export default function GameChannelRoom({
         </div>
       )}
 
-      {selectedSeatIndex !== null && (
+      {selectedSeatIndex !== null && !isRoomLocked && (
         <div className="fixed inset-0 z-[280] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
           <button
             type="button"
