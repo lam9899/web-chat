@@ -518,6 +518,7 @@ export default function MiniGolfGame({
   const [working, setWorking] = useState(false);
   const [ballIsSinking, setBallIsSinking] = useState(false);
   const [isAiming, setIsAiming] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [aimOrigin, setAimOrigin] = useState<AimPoint | null>(
     null,
   );
@@ -642,6 +643,25 @@ export default function MiniGolfGame({
       250,
     );
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(
+        document.fullscreenElement === gameSurfaceRef.current,
+      );
+    };
+
+    document.addEventListener(
+      "fullscreenchange",
+      handleFullscreenChange,
+    );
+    return () => {
+      document.removeEventListener(
+        "fullscreenchange",
+        handleFullscreenChange,
+      );
+    };
   }, []);
 
   const currentPlayer = useMemo(
@@ -2154,13 +2174,18 @@ export default function MiniGolfGame({
     setAimPoint(null);
   }
 
-  async function enterFullscreen() {
-    if (!gameSurfaceRef.current) return;
+  async function toggleFullscreen() {
     try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      if (!gameSurfaceRef.current) return;
       await gameSurfaceRef.current.requestFullscreen();
     } catch {
       setErrorMessage(
-        "Trình duyệt không cho phép mở toàn màn hình.",
+        "Trình duyệt không thể chuyển chế độ toàn màn hình.",
       );
     }
   }
@@ -2382,11 +2407,24 @@ export default function MiniGolfGame({
           )}
           <button
             type="button"
-            onClick={() => void enterFullscreen()}
-            title="Toàn màn hình"
-            className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 hover:bg-white/15"
+            onClick={() => void toggleFullscreen()}
+            title={
+              isFullscreen
+                ? "Thoát toàn màn hình"
+                : "Mở toàn màn hình"
+            }
+            aria-label={
+              isFullscreen
+                ? "Thoát toàn màn hình"
+                : "Mở toàn màn hình"
+            }
+            className={`flex h-10 w-10 items-center justify-center rounded-xl transition ${
+              isFullscreen
+                ? "bg-red-500/20 text-red-200 hover:bg-red-500/35"
+                : "bg-white/10 hover:bg-white/15"
+            }`}
           >
-            ⛶
+            {isFullscreen ? "✕" : "⛶"}
           </button>
         </div>
       </div>
