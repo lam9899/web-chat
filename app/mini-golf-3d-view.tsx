@@ -1781,84 +1781,73 @@ export default function MiniGolf3DView({
     aimGuide.visible = false;
     scene.add(aimGuide);
 
-    const aimShaftMaterial = new THREE.MeshBasicMaterial({
-      color: "#48f5c6",
-      transparent: true,
-      opacity: 0.92,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    const aimGlowMaterial = new THREE.MeshBasicMaterial({
-      color: "#48f5c6",
-      transparent: true,
-      opacity: 0.2,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    const aimShaft = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.045, 0.075, 1, 18),
-      aimShaftMaterial,
-    );
-    aimShaft.rotation.x = Math.PI / 2;
-    aimGuide.add(aimShaft);
+    const aimArrowShape = new THREE.Shape();
+    aimArrowShape.moveTo(-0.09, 0.14);
+    aimArrowShape.lineTo(0.09, 0.14);
+    aimArrowShape.lineTo(0.09, 0.62);
+    aimArrowShape.lineTo(0.26, 0.62);
+    aimArrowShape.lineTo(0, 1);
+    aimArrowShape.lineTo(-0.26, 0.62);
+    aimArrowShape.lineTo(-0.09, 0.62);
+    aimArrowShape.closePath();
+    const aimArrowGeometry = new THREE.ShapeGeometry(aimArrowShape);
 
-    const aimGlow = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.1, 0.15, 1, 18),
-      aimGlowMaterial,
+    const aimArrowBackdropMaterial = new THREE.MeshBasicMaterial({
+      color: "#07111f",
+      transparent: true,
+      opacity: 0.76,
+      side: THREE.DoubleSide,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const aimArrowBackdrop = new THREE.Mesh(
+      aimArrowGeometry,
+      aimArrowBackdropMaterial,
     );
-    aimGlow.rotation.x = Math.PI / 2;
-    aimGuide.add(aimGlow);
+    aimArrowBackdrop.rotation.x = Math.PI / 2;
+    aimArrowBackdrop.position.y = 0.17;
+    aimArrowBackdrop.renderOrder = 99;
+    aimArrowBackdrop.frustumCulled = false;
+    aimGuide.add(aimArrowBackdrop);
 
-    const arrowMaterial = new THREE.MeshPhysicalMaterial({
-      color: "#48f5c6",
-      emissive: "#48f5c6",
-      emissiveIntensity: 1.8,
-      roughness: 0.15,
-      metalness: 0.12,
-      clearcoat: 1,
+    const aimArrowMaterial = new THREE.MeshBasicMaterial({
+      color: "#22c55e",
       transparent: true,
       opacity: 0.98,
+      side: THREE.DoubleSide,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
     });
-    const aimArrow = new THREE.Mesh(
-      new THREE.ConeGeometry(0.3, 0.72, 5),
-      arrowMaterial,
+    const aimArrow2D = new THREE.Mesh(
+      aimArrowGeometry,
+      aimArrowMaterial,
     );
-    aimArrow.rotation.x = Math.PI / 2;
-    aimGuide.add(aimArrow);
+    aimArrow2D.rotation.x = Math.PI / 2;
+    aimArrow2D.position.y = 0.18;
+    aimArrow2D.renderOrder = 100;
+    aimArrow2D.frustumCulled = false;
+    aimGuide.add(aimArrow2D);
 
     const aimHaloMaterial = new THREE.MeshBasicMaterial({
-      color: "#48f5c6",
+      color: "#22c55e",
       transparent: true,
-      opacity: 0.74,
+      opacity: 0.68,
+      depthTest: false,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
+      toneMapped: false,
     });
     const aimHalo = new THREE.Mesh(
       new THREE.TorusGeometry(0.34, 0.035, 12, 64),
       aimHaloMaterial,
     );
     aimHalo.rotation.x = -Math.PI / 2;
-    aimHalo.position.y = 0.025;
+    aimHalo.position.y = 0.19;
+    aimHalo.renderOrder = 101;
+    aimHalo.frustumCulled = false;
     aimGuide.add(aimHalo);
-
-    const aimPulseMarkers: THREE.Mesh<
-      THREE.SphereGeometry,
-      THREE.MeshBasicMaterial
-    >[] = [];
-    const markerGeometry = new THREE.SphereGeometry(0.075, 16, 10);
-    for (let markerIndex = 0; markerIndex < 9; markerIndex += 1) {
-      const markerMaterial = new THREE.MeshBasicMaterial({
-        color: "#48f5c6",
-        transparent: true,
-        opacity: 0.72,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      });
-      const marker = new THREE.Mesh(markerGeometry, markerMaterial);
-      marker.scale.set(1, 0.45, 1);
-      aimGuide.add(marker);
-      aimPulseMarkers.push(marker);
-    }
 
     const raycaster = new THREE.Raycaster();
     const groundPlane = new THREE.Plane(
@@ -2297,11 +2286,13 @@ export default function MiniGolf3DView({
           direction.normalize();
           const start = courseToWorld(latest.aimOrigin, course);
           start.y += 0.28;
-          const guideLength = 2.35 + power * 5.25;
-          aimColor.setHSL(
-            0.36 * (1 - power),
-            0.96,
-            power > 0.78 ? 0.58 : 0.54,
+          const guideLength = 1.55 + power * 1.45;
+          aimColor.set(
+            power > 0.75
+              ? "#ef4444"
+              : power > 0.4
+                ? "#facc15"
+                : "#22c55e",
           );
           aimGuide.visible = true;
           aimGuide.position.copy(start);
@@ -2309,50 +2300,26 @@ export default function MiniGolf3DView({
             direction.x,
             direction.z,
           );
-          aimShaft.position.set(0, 0.035, guideLength / 2 + 0.18);
-          aimShaft.scale.set(1, guideLength - 0.35, 1);
-          aimGlow.position.copy(aimShaft.position);
-          aimGlow.scale.set(
-            1 + Math.sin(elapsed * 7) * 0.08,
-            guideLength - 0.28,
-            1 + Math.sin(elapsed * 7) * 0.08,
+          const arrowWidth = 0.92 + power * 0.12;
+          aimArrow2D.scale.set(
+            arrowWidth,
+            guideLength,
+            1,
           );
-          aimArrow.position.set(0, 0.045, guideLength + 0.46);
-          aimArrow.scale.setScalar(0.88 + power * 0.42);
+          aimArrowBackdrop.scale.set(
+            arrowWidth * 1.18,
+            guideLength * 1.045,
+            1,
+          );
           aimHalo.scale.setScalar(
-            1 + Math.sin(elapsed * 6) * 0.12 + power * 0.18,
+            0.86 +
+              Math.sin(elapsed * 6) * 0.08 +
+              power * 0.14,
           );
           aimHalo.rotation.z = elapsed * 0.7;
 
-          aimShaftMaterial.color.copy(aimColor);
-          aimGlowMaterial.color.copy(aimColor);
-          arrowMaterial.color.copy(aimColor);
-          arrowMaterial.emissive.copy(aimColor);
+          aimArrowMaterial.color.copy(aimColor);
           aimHaloMaterial.color.copy(aimColor);
-
-          const visibleMarkerCount = Math.ceil(3 + power * 6);
-          for (
-            let markerIndex = 0;
-            markerIndex < aimPulseMarkers.length;
-            markerIndex += 1
-          ) {
-            const marker = aimPulseMarkers[markerIndex];
-            marker.visible = markerIndex < visibleMarkerCount;
-            marker.position.set(
-              0,
-              0.035,
-              0.72 +
-                (markerIndex / Math.max(1, visibleMarkerCount - 1)) *
-                  Math.max(0.2, guideLength - 1.05),
-            );
-            const pulse =
-              0.52 +
-              Math.sin(elapsed * 8 - markerIndex * 0.85) * 0.34;
-            marker.scale.setScalar(0.72 + pulse * 0.45);
-            marker.scale.y *= 0.42;
-            marker.material.color.copy(aimColor);
-            marker.material.opacity = clamp(pulse, 0.2, 0.9);
-          }
         } else {
           aimGuide.visible = false;
         }
