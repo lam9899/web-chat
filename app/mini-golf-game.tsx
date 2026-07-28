@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -9,9 +8,11 @@ import {
   useState,
 } from "react";
 import { createClient } from "@/utils/supabase/client";
+import MiniGolf3DView from "./mini-golf-3d-view";
 import {
   MINI_GOLF_COURSES,
   type MiniGolfCourse,
+  type MiniGolfPoint,
   type MiniGolfRect,
 } from "./mini-golf-courses";
 
@@ -21,9 +22,9 @@ const CANVAS_HEIGHT = 560;
 const BALL_RADIUS = 0.014;
 const HOLE_SECONDS = 120;
 const MAX_HOLE_STROKES = 12;
-const MAX_DRAG_DISTANCE = 118;
-const MIN_DRAG_DISTANCE = 7;
-const MAX_SHOT_SPEED = 1040;
+const MAX_DRAG_DISTANCE = 86;
+const MIN_DRAG_DISTANCE = 5;
+const MAX_SHOT_SPEED = 1750;
 
 const PLAYER_COLORS = [
   "#ff4d6d",
@@ -87,10 +88,7 @@ type BallMotion = {
   lastSafeY: number;
 };
 
-type AimPoint = {
-  x: number;
-  y: number;
-};
+type AimPoint = MiniGolfPoint;
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -243,7 +241,7 @@ function updateBallPhysics(
   const inSand = course.sand.some((rect) =>
     pointInRect(ball.x, ball.y, rect),
   );
-  const friction = inSand ? 0.9 : 0.975;
+  const friction = inSand ? 0.91 : 0.98;
   const frictionByTime = Math.pow(friction, deltaSeconds * 60);
   ball.vx *= frictionByTime;
   ball.vy *= frictionByTime;
@@ -494,6 +492,9 @@ export default function MiniGolfGame({
   const [working, setWorking] = useState(false);
   const [ballIsSinking, setBallIsSinking] = useState(false);
   const [isAiming, setIsAiming] = useState(false);
+  const [aimOrigin, setAimOrigin] = useState<AimPoint | null>(
+    null,
+  );
   const [aimPoint, setAimPoint] = useState<AimPoint | null>(
     null,
   );
@@ -1525,6 +1526,7 @@ export default function MiniGolfGame({
     if (!canvas) return;
     const context = canvas.getContext("2d");
     if (!context) return;
+    const enableLegacyRenderer = false;
 
     let animationFrame = 0;
     let previousTime = performance.now();
@@ -1609,7 +1611,8 @@ export default function MiniGolfGame({
         }
       }
 
-      drawCourse(context, course, time);
+      if (enableLegacyRenderer) {
+        drawCourse(context, course, time);
 
       const sameHolePlayers = players.filter(
         (player) =>
@@ -1820,11 +1823,12 @@ export default function MiniGolfGame({
       );
       context.font = "bold 14px system-ui";
       context.fillStyle = "#cbd5e1";
-      context.fillText(
-        `${course.name} · Par ${course.par}`,
-        34,
-        71,
-      );
+        context.fillText(
+          `${course.name} · Par ${course.par}`,
+          34,
+          71,
+        );
+      }
 
       animationFrame = window.requestAnimationFrame(render);
     };
@@ -1844,27 +1848,7 @@ export default function MiniGolfGame({
     viewedHole,
   ]);
 
-  function pointerPosition(
-    event: ReactPointerEvent<HTMLCanvasElement>,
-  ) {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    return {
-      x: clamp(
-        (event.clientX - bounds.left) / bounds.width,
-        0,
-        1,
-      ),
-      y: clamp(
-        (event.clientY - bounds.top) / bounds.height,
-        0,
-        1,
-      ),
-    };
-  }
-
-  function beginAim(
-    event: ReactPointerEvent<HTMLCanvasElement>,
-  ) {
+  function beginAimAt(point: AimPoint) {
     if (
       working ||
       match?.status !== "playing" ||
@@ -1877,7 +1861,6 @@ export default function MiniGolfGame({
       return;
     }
 
-    const point = pointerPosition(event);
     if (
       pixelDistance(
         point.x,
@@ -1892,35 +1875,34 @@ export default function MiniGolfGame({
       return;
     }
 
-    event.currentTarget.setPointerCapture(event.pointerId);
     setIsAiming(true);
+    setAimOrigin({
+      x: ballRef.current.x,
+      y: ballRef.current.y,
+    });
     setAimPoint(point);
     setNoticeMessage("Kéo xa hơn để tăng lực, thả tay để đánh.");
   }
 
-  function moveAim(
-    event: ReactPointerEvent<HTMLCanvasElement>,
-  ) {
+  function moveAimAt(point: AimPoint) {
     if (!isAiming) return;
-    setAimPoint(pointerPosition(event));
+    setAimPoint(point);
   }
 
-  function releaseAim(
-    event: ReactPointerEvent<HTMLCanvasElement>,
-  ) {
-    if (!isAiming || !aimPoint) return;
+  function releaseAimAt(point: AimPoint) {
+    if (!isAiming || !aimOrigin) return;
     setIsAiming(false);
-    event.currentTarget.releasePointerCapture(event.pointerId);
 
     const ball = ballRef.current;
     const ballX = ball.x * CANVAS_WIDTH;
     const ballY = ball.y * CANVAS_HEIGHT;
-    const aimX = aimPoint.x * CANVAS_WIDTH;
-    const aimY = aimPoint.y * CANVAS_HEIGHT;
+    const aimX = point.x * CANVAS_WIDTH;
+    const aimY = point.y * CANVAS_HEIGHT;
     const directionX = ballX - aimX;
     const directionY = ballY - aimY;
     const dragDistance = Math.hypot(directionX, directionY);
     setAimPoint(null);
+    setAimOrigin(null);
 
     if (dragDistance < MIN_DRAG_DISTANCE) {
       setNoticeMessage("Lực quá nhẹ. Hãy kéo xa hơn một chút.");
@@ -1932,7 +1914,7 @@ export default function MiniGolfGame({
       0.08,
       1,
     );
-    const responsivePower = Math.pow(rawPower, 0.82);
+    const responsivePower = Math.pow(rawPower, 0.68);
     const pixelSpeed = MAX_SHOT_SPEED * responsivePower;
     ball.vx =
       (directionX / dragDistance) *
@@ -1946,7 +1928,15 @@ export default function MiniGolfGame({
     ball.lastSafeX = ball.x;
     ball.lastSafeY = ball.y;
     shotStartedAtRef.current = performance.now();
-    setNoticeMessage("Bóng đang lăn...");
+    setNoticeMessage(
+      `Bóng đang lăn với lực ${Math.round(rawPower * 100)}%...`,
+    );
+  }
+
+  function cancelAim() {
+    setIsAiming(false);
+    setAimOrigin(null);
+    setAimPoint(null);
   }
 
   async function enterFullscreen() {
@@ -1973,6 +1963,25 @@ export default function MiniGolfGame({
   const podiumPlayers = rankedPlayers
     .filter((player) => player.player_status === "finished")
     .slice(0, 3);
+  const aimPower =
+    aimOrigin && aimPoint
+      ? clamp(
+          Math.hypot(
+            (aimOrigin.x - aimPoint.x) * CANVAS_WIDTH,
+            (aimOrigin.y - aimPoint.y) * CANVAS_HEIGHT,
+          ) / MAX_DRAG_DISTANCE,
+          0,
+          1,
+        )
+      : 0;
+  const canControlBall = Boolean(
+    match?.status === "playing" &&
+      currentPlayer?.player_status === "playing" &&
+      !currentPlayer.hole_completed &&
+      !ballIsSinking &&
+      !working &&
+      remainingSeconds > 0,
+  );
 
   if (loading) {
     return (
@@ -2174,27 +2183,53 @@ export default function MiniGolfGame({
       )}
 
       <div className="relative bg-black">
+        <MiniGolf3DView
+          course={course}
+          viewedHole={viewedHole}
+          players={players}
+          currentPlayer={currentPlayer}
+          ballRef={ballRef}
+          isAiming={isAiming}
+          aimOrigin={aimOrigin}
+          aimPoint={aimPoint}
+          interactive={canControlBall}
+          maxDragDistance={MAX_DRAG_DISTANCE}
+          onAimStart={beginAimAt}
+          onAimMove={moveAimAt}
+          onAimEnd={releaseAimAt}
+          onAimCancel={cancelAim}
+        />
         <canvas
           ref={canvasRef}
-          width={CANVAS_WIDTH}
-          height={CANVAS_HEIGHT}
-          onPointerDown={beginAim}
-          onPointerMove={moveAim}
-          onPointerUp={releaseAim}
-          onPointerCancel={() => {
-            setIsAiming(false);
-            setAimPoint(null);
-          }}
-          className={`block aspect-[25/14] w-full touch-none ${
-            currentPlayer?.player_status === "playing" &&
-            !currentPlayer.hole_completed &&
-            !ballIsSinking &&
-            !working
-              ? "cursor-crosshair"
-              : "cursor-default"
-          }`}
-          aria-label={`Sân Mini Golf hố ${viewedHole}: ${course.name}`}
+          width={1}
+          height={1}
+          className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
+          aria-hidden="true"
         />
+        {isAiming && aimOrigin && aimPoint && (
+          <div className="pointer-events-none absolute bottom-3 right-3 z-20 w-36 rounded-xl border border-white/15 bg-slate-950/90 px-3 py-2 shadow-2xl backdrop-blur">
+            <div className="mb-1 flex items-center justify-between text-[11px] font-black">
+              <span className="text-gray-300">LỰC</span>
+              <span
+                className={
+                  aimPower > 0.75
+                    ? "text-red-400"
+                    : aimPower > 0.4
+                      ? "text-amber-300"
+                      : "text-emerald-300"
+                }
+              >
+                {Math.round(aimPower * 100)}%
+              </span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-yellow-300 to-red-500 transition-[width] duration-75"
+                style={{ width: `${aimPower * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
         {!currentPlayer && (
           <div className="absolute inset-x-4 bottom-4 rounded-xl bg-black/75 px-4 py-3 text-center text-sm font-bold backdrop-blur">
             Bạn đang xem trận đấu. Chỉ những người có mặt trong
