@@ -19,7 +19,7 @@ const supabase = createClient();
 const CANVAS_WIDTH = 1000;
 const CANVAS_HEIGHT = 560;
 const BALL_RADIUS = 0.014;
-const HOLE_SECONDS = 60;
+const HOLE_SECONDS = 120;
 const MAX_HOLE_STROKES = 12;
 const MAX_DRAG_DISTANCE = 118;
 const MIN_DRAG_DISTANCE = 7;
@@ -80,6 +80,9 @@ type BallMotion = {
   vx: number;
   vy: number;
   moving: boolean;
+  rotation: number;
+  sinking: boolean;
+  sinkStartedAt: number;
   lastSafeX: number;
   lastSafeY: number;
 };
@@ -91,6 +94,12 @@ type AimPoint = {
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function seededNoise(index: number, seed: number) {
+  const value =
+    Math.sin(index * 12.9898 + seed * 78.233) * 43758.5453;
+  return value - Math.floor(value);
 }
 
 function pointInRect(
@@ -183,8 +192,12 @@ function updateBallPhysics(
   course: MiniGolfCourse,
   deltaSeconds: number,
 ) {
+  const speedBeforeMove = ballPixelSpeed(ball);
   ball.x += ball.vx * deltaSeconds;
   ball.y += ball.vy * deltaSeconds;
+  ball.rotation +=
+    (speedBeforeMove * deltaSeconds) /
+    (BALL_RADIUS * CANVAS_WIDTH);
 
   const minimumX = 0.04 + BALL_RADIUS;
   const maximumX = 0.96 - BALL_RADIUS;
@@ -309,12 +322,16 @@ function drawPlayerBall(
   color: string,
   label: string,
   emphasized: boolean,
+  rotation = 0,
+  scale = 1,
+  alpha = 1,
 ) {
   const pixelX = x * CANVAS_WIDTH;
   const pixelY = y * CANVAS_HEIGHT;
-  const radius = emphasized ? 13 : 10;
+  const radius = (emphasized ? 13 : 10) * scale;
 
   context.save();
+  context.globalAlpha = alpha;
   if (emphasized) {
     context.beginPath();
     context.arc(pixelX, pixelY, radius + 10, 0, Math.PI * 2);
@@ -332,47 +349,105 @@ function drawPlayerBall(
     context.fill();
   }
 
-  context.shadowColor = emphasized
-    ? color
-    : "rgba(0,0,0,0.45)";
-  context.shadowBlur = emphasized ? 17 : 10;
-  context.shadowOffsetY = 5;
+  context.shadowColor = "rgba(0,0,0,0.55)";
+  context.shadowBlur = emphasized ? 13 : 8;
+  context.shadowOffsetY = Math.max(2, 5 * scale);
   context.beginPath();
-  context.arc(pixelX, pixelY + 3, radius, 0, Math.PI * 2);
-  context.fillStyle = "rgba(0,0,0,0.3)";
+  context.ellipse(
+    pixelX,
+    pixelY + radius * 0.72,
+    radius * 0.95,
+    radius * 0.38,
+    0,
+    0,
+    Math.PI * 2,
+  );
+  context.fillStyle = "rgba(0,0,0,0.38)";
   context.fill();
+  context.shadowBlur = 0;
+  context.shadowOffsetY = 0;
 
   const gradient = context.createRadialGradient(
-    pixelX - 4,
-    pixelY - 5,
-    2,
+    pixelX - radius * 0.38,
+    pixelY - radius * 0.42,
+    Math.max(1, radius * 0.06),
     pixelX,
     pixelY,
     radius,
   );
   gradient.addColorStop(0, "#ffffff");
-  gradient.addColorStop(0.18, "#ffffff");
-  gradient.addColorStop(0.36, color);
-  gradient.addColorStop(1, "#111827");
+  gradient.addColorStop(0.16, "#f8fafc");
+  gradient.addColorStop(0.43, color);
+  gradient.addColorStop(0.78, color);
+  gradient.addColorStop(1, "#0f172a");
   context.beginPath();
   context.arc(pixelX, pixelY, radius, 0, Math.PI * 2);
   context.fillStyle = gradient;
   context.fill();
-  context.strokeStyle = emphasized ? "#ffffff" : color;
-  context.lineWidth = emphasized ? 3 : 2;
+  context.strokeStyle = emphasized
+    ? "rgba(255,255,255,0.92)"
+    : "rgba(255,255,255,0.7)";
+  context.lineWidth = Math.max(1, (emphasized ? 2.5 : 1.5) * scale);
   context.stroke();
+
+  context.save();
   context.beginPath();
-  context.arc(
-    pixelX - radius * 0.28,
-    pixelY - radius * 0.32,
-    Math.max(2, radius * 0.2),
+  context.arc(pixelX, pixelY, radius * 0.9, 0, Math.PI * 2);
+  context.clip();
+  context.translate(pixelX, pixelY);
+  context.rotate(rotation);
+  for (let index = 0; index < 10; index += 1) {
+    const angle = (index / 10) * Math.PI * 2;
+    const ring = index % 2 === 0 ? 0.48 : 0.72;
+    const dimpleX = Math.cos(angle) * radius * ring;
+    const dimpleY = Math.sin(angle) * radius * ring * 0.68;
+    context.beginPath();
+    context.arc(
+      dimpleX,
+      dimpleY,
+      Math.max(0.7, radius * 0.075),
+      0,
+      Math.PI * 2,
+    );
+    context.fillStyle = "rgba(15,23,42,0.28)";
+    context.fill();
+    context.beginPath();
+    context.arc(
+      dimpleX - radius * 0.025,
+      dimpleY - radius * 0.025,
+      Math.max(0.35, radius * 0.035),
+      0,
+      Math.PI * 2,
+    );
+    context.fillStyle = "rgba(255,255,255,0.42)";
+    context.fill();
+  }
+  context.strokeStyle = "rgba(255,255,255,0.62)";
+  context.lineWidth = Math.max(0.7, scale);
+  context.beginPath();
+  context.arc(0, 0, radius * 0.58, -0.9, 1.25);
+  context.stroke();
+  context.restore();
+
+  const highlight = context.createRadialGradient(
+    pixelX - radius * 0.36,
+    pixelY - radius * 0.4,
     0,
-    Math.PI * 2,
+    pixelX - radius * 0.36,
+    pixelY - radius * 0.4,
+    radius * 0.42,
   );
-  context.fillStyle = "rgba(255,255,255,0.9)";
+  highlight.addColorStop(0, "rgba(255,255,255,0.95)");
+  highlight.addColorStop(1, "rgba(255,255,255,0)");
+  context.beginPath();
+  context.arc(pixelX, pixelY, radius, 0, Math.PI * 2);
+  context.fillStyle = highlight;
   context.fill();
   context.restore();
 
+  if (scale < 0.55 || alpha < 0.45) return;
+  context.save();
+  context.globalAlpha = alpha;
   context.font = emphasized
     ? "bold 13px system-ui"
     : "bold 11px system-ui";
@@ -382,6 +457,7 @@ function drawPlayerBall(
   context.lineWidth = 3;
   context.strokeText(label, pixelX, pixelY - radius - 8);
   context.fillText(label, pixelX, pixelY - radius - 8);
+  context.restore();
 }
 
 export default function MiniGolfGame({
@@ -401,6 +477,9 @@ export default function MiniGolfGame({
     vx: 0,
     vy: 0,
     moving: false,
+    rotation: 0,
+    sinking: false,
+    sinkStartedAt: 0,
     lastSafeX: MINI_GOLF_COURSES[0].start.x,
     lastSafeY: MINI_GOLF_COURSES[0].start.y,
   });
@@ -413,6 +492,7 @@ export default function MiniGolfGame({
   const [players, setPlayers] = useState<MiniGolfPlayer[]>([]);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const [ballIsSinking, setBallIsSinking] = useState(false);
   const [isAiming, setIsAiming] = useState(false);
   const [aimPoint, setAimPoint] = useState<AimPoint | null>(
     null,
@@ -422,6 +502,10 @@ export default function MiniGolfGame({
   const [noticeMessage, setNoticeMessage] = useState(
     "Giữ chuột vào bóng, kéo ngược hướng muốn đánh rồi thả.",
   );
+  const [
+    dismissedWaitingOverlayKey,
+    setDismissedWaitingOverlayKey,
+  ] = useState<string | null>(null);
 
   const loadMatch = useCallback(async () => {
     const [
@@ -544,9 +628,21 @@ export default function MiniGolfGame({
     MINI_GOLF_COURSES[
       clamp(viewedHole - 1, 0, MINI_GOLF_COURSES.length - 1)
     ];
+  const waitingOverlayKey =
+    currentPlayerWaiting && match
+      ? `${match.match_id}:${viewedHole}`
+      : null;
+  const showWaitingOverlay =
+    currentPlayerWaiting &&
+    waitingOverlayKey !== dismissedWaitingOverlayKey;
 
   useEffect(() => {
-    if (!currentPlayer || ballRef.current.moving || working) {
+    if (
+      !currentPlayer ||
+      ballRef.current.moving ||
+      ballRef.current.sinking ||
+      working
+    ) {
       return;
     }
 
@@ -558,9 +654,13 @@ export default function MiniGolfGame({
       vx: 0,
       vy: 0,
       moving: false,
+      rotation: 0,
+      sinking: false,
+      sinkStartedAt: 0,
       lastSafeX: nextX,
       lastSafeY: nextY,
     };
+    setBallIsSinking(false);
   }, [
     course.start.x,
     course.start.y,
@@ -662,7 +762,8 @@ export default function MiniGolfGame({
       currentPlayer.hole_completed ||
       remainingSeconds > 0 ||
       working ||
-      ballRef.current.moving
+      ballRef.current.moving ||
+      ballRef.current.sinking
     ) {
       return;
     }
@@ -784,11 +885,87 @@ export default function MiniGolfGame({
         context.restore();
       }
 
-      context.fillStyle = "rgba(255,255,255,0.09)";
-      for (let index = 0; index < 190; index += 1) {
-        const bladeX = 42 + ((index * 83) % 916);
-        const bladeY = 34 + ((index * 47) % 492);
-        context.fillRect(bladeX, bladeY, 1, 4);
+      for (let index = 0; index < 90; index += 1) {
+        const patchX =
+          42 +
+          seededNoise(index, currentCourse.id * 3.1) * 916;
+        const patchY =
+          34 +
+          seededNoise(index, currentCourse.id * 5.7) * 492;
+        const patchRadius =
+          9 + seededNoise(index, currentCourse.id * 8.3) * 25;
+        const patch = context.createRadialGradient(
+          patchX,
+          patchY,
+          0,
+          patchX,
+          patchY,
+          patchRadius,
+        );
+        patch.addColorStop(
+          0,
+          index % 3 === 0
+            ? "rgba(255,255,210,0.065)"
+            : "rgba(3,70,35,0.09)",
+        );
+        patch.addColorStop(1, "rgba(0,0,0,0)");
+        context.fillStyle = patch;
+        context.fillRect(
+          patchX - patchRadius,
+          patchY - patchRadius,
+          patchRadius * 2,
+          patchRadius * 2,
+        );
+      }
+
+      context.lineCap = "round";
+      for (let index = 0; index < 620; index += 1) {
+        const bladeX =
+          39 +
+          seededNoise(index, currentCourse.id * 11.1) * 922;
+        const bladeY =
+          31 +
+          seededNoise(index, currentCourse.id * 13.7) * 500;
+        const bladeLength =
+          2.5 +
+          seededNoise(index, currentCourse.id * 17.3) * 5.5;
+        const bladeLean =
+          (seededNoise(index, currentCourse.id * 19.9) - 0.5) *
+          3.5;
+        context.strokeStyle =
+          index % 4 === 0
+            ? "rgba(220,252,231,0.2)"
+            : index % 3 === 0
+              ? "rgba(6,78,59,0.22)"
+              : "rgba(187,247,208,0.13)";
+        context.lineWidth =
+          index % 7 === 0 ? 1.25 : 0.75;
+        context.beginPath();
+        context.moveTo(bladeX, bladeY);
+        context.quadraticCurveTo(
+          bladeX + bladeLean * 0.45,
+          bladeY - bladeLength * 0.55,
+          bladeX + bladeLean,
+          bladeY - bladeLength,
+        );
+        context.stroke();
+      }
+
+      for (let index = 0; index < 34; index += 1) {
+        const dewX =
+          44 +
+          seededNoise(index, currentCourse.id * 23.4) * 912;
+        const dewY =
+          36 +
+          seededNoise(index, currentCourse.id * 27.8) * 486;
+        const shimmer =
+          0.18 +
+          ((Math.sin(time / 420 + index * 1.9) + 1) / 2) *
+            0.42;
+        context.fillStyle = `rgba(240,253,250,${shimmer})`;
+        context.beginPath();
+        context.arc(dewX, dewY, 0.8, 0, Math.PI * 2);
+        context.fill();
       }
       context.restore();
 
@@ -808,6 +985,35 @@ export default function MiniGolfGame({
       context.beginPath();
       context.roundRect(38, 28, 924, 504, 22);
       context.stroke();
+
+      context.globalAlpha = 0.26;
+      context.lineWidth = 1.2;
+      for (let index = 0; index < 30; index += 1) {
+        const grainX = 56 + index * 30.2;
+        const grainLength = 9 + (index % 5) * 4;
+        context.strokeStyle =
+          index % 2 === 0
+            ? "rgba(255,255,255,0.8)"
+            : "rgba(71,35,10,0.9)";
+        context.beginPath();
+        context.moveTo(grainX, 18 + (index % 3));
+        context.quadraticCurveTo(
+          grainX + grainLength * 0.5,
+          13 + (index % 4),
+          grainX + grainLength,
+          18 + ((index + 1) % 3),
+        );
+        context.stroke();
+        context.beginPath();
+        context.moveTo(grainX, 542 - (index % 3));
+        context.quadraticCurveTo(
+          grainX + grainLength * 0.5,
+          548 - (index % 4),
+          grainX + grainLength,
+          542 - ((index + 1) % 3),
+        );
+        context.stroke();
+      }
       context.restore();
 
       for (const water of currentCourse.water) {
@@ -821,17 +1027,39 @@ export default function MiniGolfGame({
           x,
           y + height,
         );
-        waterGradient.addColorStop(0, "#67e8f9");
-        waterGradient.addColorStop(0.45, "#0ea5e9");
-        waterGradient.addColorStop(1, "#075985");
+        waterGradient.addColorStop(0, "#a5f3fc");
+        waterGradient.addColorStop(0.16, "#38bdf8");
+        waterGradient.addColorStop(0.58, "#0284c7");
+        waterGradient.addColorStop(1, "#082f49");
         context.save();
-        context.shadowColor = "#0284c7";
-        context.shadowBlur = 16;
+        context.shadowColor = "rgba(3,105,161,0.78)";
+        context.shadowBlur = 20;
+        context.shadowOffsetY = 5;
         context.fillStyle = waterGradient;
         drawRoundedRect(context, x, y, width, height, 16);
         context.restore();
-        context.strokeStyle = "rgba(255,255,255,0.48)";
-        context.lineWidth = 2;
+
+        context.save();
+        context.beginPath();
+        context.roundRect(x, y, width, height, 16);
+        context.clip();
+
+        const waterLight = context.createRadialGradient(
+          x + width * 0.25,
+          y + height * 0.08,
+          0,
+          x + width * 0.25,
+          y + height * 0.08,
+          Math.max(width, height) * 0.9,
+        );
+        waterLight.addColorStop(0, "rgba(255,255,255,0.28)");
+        waterLight.addColorStop(0.45, "rgba(125,211,252,0.08)");
+        waterLight.addColorStop(1, "rgba(2,44,71,0.28)");
+        context.fillStyle = waterLight;
+        context.fillRect(x, y, width, height);
+
+        context.strokeStyle = "rgba(224,242,254,0.48)";
+        context.lineWidth = 1.6;
         const waveOffset = (time / 70) % 20;
         for (let waveY = y + 12; waveY < y + height; waveY += 19) {
           context.beginPath();
@@ -850,6 +1078,47 @@ export default function MiniGolfGame({
           }
           context.stroke();
         }
+
+        context.globalCompositeOperation = "screen";
+        context.strokeStyle = "rgba(165,243,252,0.2)";
+        context.lineWidth = 4;
+        for (let index = 0; index < 7; index += 1) {
+          const rippleX =
+            x +
+            seededNoise(index, currentCourse.id * 33.2) *
+              width;
+          const rippleY =
+            y +
+            seededNoise(index, currentCourse.id * 37.6) *
+              height;
+          const ripple =
+            8 +
+            ((time / 38 + index * 17) %
+              Math.max(20, Math.min(width, height) * 0.7));
+          context.beginPath();
+          context.ellipse(
+            rippleX,
+            rippleY,
+            ripple,
+            ripple * 0.32,
+            0,
+            0,
+            Math.PI * 2,
+          );
+          context.stroke();
+        }
+        context.restore();
+
+        context.strokeStyle = "rgba(224,242,254,0.8)";
+        context.lineWidth = 3;
+        context.beginPath();
+        context.roundRect(x + 1, y + 1, width - 2, height - 2, 15);
+        context.stroke();
+        context.strokeStyle = "rgba(3,105,161,0.75)";
+        context.lineWidth = 5;
+        context.beginPath();
+        context.roundRect(x - 2, y - 2, width + 4, height + 4, 18);
+        context.stroke();
       }
 
       for (const sand of currentCourse.sand) {
@@ -863,9 +1132,10 @@ export default function MiniGolfGame({
           x,
           y + height,
         );
-        sandGradient.addColorStop(0, "#fef3c7");
-        sandGradient.addColorStop(0.4, "#fcd34d");
-        sandGradient.addColorStop(1, "#d97706");
+        sandGradient.addColorStop(0, "#fff7d6");
+        sandGradient.addColorStop(0.34, "#f8d88a");
+        sandGradient.addColorStop(0.72, "#e7ac46");
+        sandGradient.addColorStop(1, "#b96f20");
         context.save();
         context.shadowColor = "rgba(120,53,15,0.4)";
         context.shadowBlur = 10;
@@ -877,18 +1147,56 @@ export default function MiniGolfGame({
         context.beginPath();
         context.roundRect(x, y, width, height, 20);
         context.stroke();
-        context.fillStyle = "rgba(146,64,14,0.22)";
-        for (let dotX = x + 10; dotX < x + width; dotX += 18) {
-          for (
-            let dotY = y + 10;
-            dotY < y + height;
-            dotY += 17
-          ) {
-            context.beginPath();
-            context.arc(dotX, dotY, 1.6, 0, Math.PI * 2);
-            context.fill();
-          }
+        context.save();
+        context.beginPath();
+        context.roundRect(x, y, width, height, 20);
+        context.clip();
+        for (let index = 0; index < 140; index += 1) {
+          const grainX =
+            x +
+            seededNoise(index, currentCourse.id * 41.3) * width;
+          const grainY =
+            y +
+            seededNoise(index, currentCourse.id * 47.9) * height;
+          const grainRadius =
+            0.45 +
+            seededNoise(index, currentCourse.id * 51.1) * 1.25;
+          context.fillStyle =
+            index % 4 === 0
+              ? "rgba(255,255,255,0.4)"
+              : index % 3 === 0
+                ? "rgba(120,53,15,0.3)"
+                : "rgba(180,83,9,0.2)";
+          context.beginPath();
+          context.arc(
+            grainX,
+            grainY,
+            grainRadius,
+            0,
+            Math.PI * 2,
+          );
+          context.fill();
         }
+        context.strokeStyle = "rgba(146,64,14,0.2)";
+        context.lineWidth = 2;
+        for (
+          let rakeY = y + 12;
+          rakeY < y + height;
+          rakeY += 11
+        ) {
+          context.beginPath();
+          context.moveTo(x - 4, rakeY);
+          context.bezierCurveTo(
+            x + width * 0.3,
+            rakeY - 5,
+            x + width * 0.65,
+            rakeY + 5,
+            x + width + 4,
+            rakeY,
+          );
+          context.stroke();
+        }
+        context.restore();
       }
 
       for (const obstacle of currentCourse.obstacles) {
@@ -923,6 +1231,38 @@ export default function MiniGolfGame({
         context.beginPath();
         context.moveTo(x + 5, y + 5);
         context.lineTo(x + width - 5, y + 5);
+        context.stroke();
+        const rivetCount = Math.max(
+          2,
+          Math.floor(Math.max(width, height) / 34),
+        );
+        for (let index = 0; index < rivetCount; index += 1) {
+          const fraction = (index + 0.5) / rivetCount;
+          const rivetX =
+            width >= height ? x + width * fraction : x + width / 2;
+          const rivetY =
+            width >= height ? y + height / 2 : y + height * fraction;
+          const rivet = context.createRadialGradient(
+            rivetX - 1,
+            rivetY - 1,
+            0,
+            rivetX,
+            rivetY,
+            4,
+          );
+          rivet.addColorStop(0, "#f8fafc");
+          rivet.addColorStop(0.45, "#94a3b8");
+          rivet.addColorStop(1, "#0f172a");
+          context.fillStyle = rivet;
+          context.beginPath();
+          context.arc(rivetX, rivetY, 3.2, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.strokeStyle = "rgba(34,197,94,0.38)";
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(x + 4, y + height - 3);
+        context.lineTo(x + width - 4, y + height - 3);
         context.stroke();
       }
 
@@ -969,11 +1309,46 @@ export default function MiniGolfGame({
         );
         context.fillStyle = "rgba(255,255,255,0.42)";
         context.fill();
+        context.strokeStyle = "rgba(15,23,42,0.5)";
+        context.lineWidth = 1.5;
+        context.beginPath();
+        context.moveTo(centerX - radius * 0.1, centerY - radius * 0.8);
+        context.lineTo(centerX + radius * 0.05, centerY - radius * 0.25);
+        context.lineTo(centerX - radius * 0.2, centerY + radius * 0.25);
+        context.stroke();
+        context.strokeStyle = "rgba(74,222,128,0.4)";
+        context.lineWidth = 2.5;
+        context.beginPath();
+        context.arc(
+          centerX,
+          centerY,
+          radius * 0.86,
+          0.2,
+          2.5,
+        );
+        context.stroke();
       }
 
       const holeX = currentCourse.hole.x * CANVAS_WIDTH;
       const holeY = currentCourse.hole.y * CANVAS_HEIGHT;
       const pulse = 1 + Math.sin(time / 360) * 0.08;
+      context.save();
+      const flagShadow = context.createLinearGradient(
+        holeX,
+        holeY,
+        holeX - 130,
+        holeY + 48,
+      );
+      flagShadow.addColorStop(0, "rgba(2,6,23,0.3)");
+      flagShadow.addColorStop(1, "rgba(2,6,23,0)");
+      context.strokeStyle = flagShadow;
+      context.lineWidth = 8;
+      context.beginPath();
+      context.moveTo(holeX + 3, holeY + 4);
+      context.lineTo(holeX - 122, holeY + 45);
+      context.stroke();
+      context.restore();
+
       context.save();
       context.beginPath();
       context.ellipse(
@@ -998,21 +1373,80 @@ export default function MiniGolfGame({
       context.fillStyle = holeGlow;
       context.fill();
       context.restore();
+      context.save();
       context.beginPath();
       context.ellipse(
         holeX,
-        holeY,
-        17,
-        10,
+        holeY + 3,
+        22,
+        13,
         0,
         0,
         Math.PI * 2,
       );
-      context.fillStyle = "#030712";
+      context.fillStyle = "rgba(2,6,23,0.25)";
       context.fill();
-      context.strokeStyle = colors.accent;
-      context.lineWidth = 3;
+      const cupRim = context.createRadialGradient(
+        holeX - 4,
+        holeY - 4,
+        2,
+        holeX,
+        holeY,
+        21,
+      );
+      cupRim.addColorStop(0, "#f8fafc");
+      cupRim.addColorStop(0.48, "#d1d5db");
+      cupRim.addColorStop(0.64, "#64748b");
+      cupRim.addColorStop(1, "#111827");
+      context.beginPath();
+      context.ellipse(
+        holeX,
+        holeY,
+        19,
+        11,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      context.fillStyle = cupRim;
+      context.fill();
+      const cupDepth = context.createRadialGradient(
+        holeX - 2,
+        holeY - 3,
+        1,
+        holeX,
+        holeY + 2,
+        15,
+      );
+      cupDepth.addColorStop(0, "#334155");
+      cupDepth.addColorStop(0.36, "#0f172a");
+      cupDepth.addColorStop(1, "#000000");
+      context.beginPath();
+      context.ellipse(
+        holeX,
+        holeY + 1,
+        14.5,
+        8,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      context.fillStyle = cupDepth;
+      context.fill();
+      context.strokeStyle = `${colors.accent}cc`;
+      context.lineWidth = 2;
+      context.beginPath();
+      context.ellipse(
+        holeX,
+        holeY,
+        19,
+        11,
+        0,
+        0,
+        Math.PI * 2,
+      );
       context.stroke();
+      context.restore();
       const poleGradient = context.createLinearGradient(
         holeX - 3,
         0,
@@ -1103,6 +1537,24 @@ export default function MiniGolfGame({
       );
       previousTime = time;
       const ball = ballRef.current;
+      const sinkProgress = ball.sinking
+        ? clamp((time - ball.sinkStartedAt) / 720, 0, 1)
+        : 0;
+
+      if (
+        ball.sinking &&
+        sinkProgress >= 1 &&
+        !shotResolvingRef.current
+      ) {
+        ball.sinking = false;
+        setBallIsSinking(false);
+        void recordShot(
+          course.hole.x,
+          course.hole.y,
+          true,
+          false,
+        );
+      }
 
       if (ball.moving && !shotResolvingRef.current) {
         updateBallPhysics(ball, course, deltaSeconds);
@@ -1124,6 +1576,7 @@ export default function MiniGolfGame({
           ball.vx = 0;
           ball.vy = 0;
           ball.moving = false;
+          setBallIsSinking(false);
           void recordShot(ball.x, ball.y, false, true);
         } else if (distanceToHole < 20 && speed < 175) {
           ball.x = course.hole.x;
@@ -1131,7 +1584,10 @@ export default function MiniGolfGame({
           ball.vx = 0;
           ball.vy = 0;
           ball.moving = false;
-          void recordShot(ball.x, ball.y, true, false);
+          ball.sinking = true;
+          ball.sinkStartedAt = time;
+          setBallIsSinking(true);
+          setNoticeMessage("⛳ Bóng đang rơi xuống lỗ...");
         } else {
           const inSand = course.sand.some((rect) =>
             pointInRect(ball.x, ball.y, rect),
@@ -1159,7 +1615,8 @@ export default function MiniGolfGame({
         (player) =>
           player.id !== currentUserId &&
           player.player_status === "playing" &&
-          player.current_hole === viewedHole,
+          player.current_hole === viewedHole &&
+          !player.hole_completed,
       );
       for (const player of sameHolePlayers) {
         drawPlayerBall(
@@ -1176,23 +1633,85 @@ export default function MiniGolfGame({
 
       if (
         currentPlayer?.player_status === "playing" &&
-        currentPlayer.current_hole === viewedHole
+        currentPlayer.current_hole === viewedHole &&
+        !currentPlayer.hole_completed &&
+        (!shotResolvingRef.current || ball.sinking)
       ) {
+        if (ball.moving) {
+          const speed = ballPixelSpeed(ball);
+          const directionLength = Math.max(
+            0.001,
+            Math.hypot(ball.vx, ball.vy),
+          );
+          const directionX = ball.vx / directionLength;
+          const directionY = ball.vy / directionLength;
+          const trailStrength = clamp(speed / 850, 0.1, 0.75);
+          context.save();
+          for (let index = 3; index >= 1; index -= 1) {
+            const trailX =
+              ball.x * CANVAS_WIDTH -
+              directionX * index * (7 + trailStrength * 9);
+            const trailY =
+              ball.y * CANVAS_HEIGHT -
+              directionY * index * (7 + trailStrength * 9);
+            context.beginPath();
+            context.ellipse(
+              trailX,
+              trailY,
+              7 - index * 1.1,
+              3.5 - index * 0.45,
+              Math.atan2(directionY, directionX),
+              0,
+              Math.PI * 2,
+            );
+            context.fillStyle = `rgba(255,255,255,${
+              trailStrength * (0.22 - index * 0.035)
+            })`;
+            context.fill();
+          }
+          context.restore();
+        }
+
+        if (ball.sinking) {
+          const rippleRadius = 18 + sinkProgress * 26;
+          context.save();
+          context.strokeStyle = `rgba(255,255,255,${
+            0.65 * (1 - sinkProgress)
+          })`;
+          context.lineWidth = 3;
+          context.beginPath();
+          context.ellipse(
+            course.hole.x * CANVAS_WIDTH,
+            course.hole.y * CANVAS_HEIGHT,
+            rippleRadius,
+            rippleRadius * 0.5,
+            0,
+            0,
+            Math.PI * 2,
+          );
+          context.stroke();
+          context.restore();
+        }
+
         drawPlayerBall(
           context,
           ball.x,
-          ball.y,
+          ball.y + sinkProgress * 0.012,
           PLAYER_COLORS[
             currentPlayer.seat_index % PLAYER_COLORS.length
           ],
           "Bạn",
           true,
+          ball.rotation,
+          1 - sinkProgress * 0.82,
+          1 - sinkProgress * 0.92,
         );
 
         if (
           isAiming &&
           aimPoint &&
           !ball.moving &&
+          !ball.sinking &&
           !currentPlayer.hole_completed
         ) {
           const ballX = ball.x * CANVAS_WIDTH;
@@ -1352,6 +1871,7 @@ export default function MiniGolfGame({
       currentPlayer?.player_status !== "playing" ||
       currentPlayer.hole_completed ||
       ballRef.current.moving ||
+      ballRef.current.sinking ||
       remainingSeconds <= 0
     ) {
       return;
@@ -1421,6 +1941,8 @@ export default function MiniGolfGame({
       (directionY / dragDistance) *
       (pixelSpeed / CANVAS_HEIGHT);
     ball.moving = true;
+    ball.sinking = false;
+    setBallIsSinking(false);
     ball.lastSafeX = ball.x;
     ball.lastSafeY = ball.y;
     shotStartedAtRef.current = performance.now();
@@ -1474,9 +1996,28 @@ export default function MiniGolfGame({
             nhất sẽ chiến thắng và bước lên bục Top 1–2–3.
           </p>
           <div className="mt-6 rounded-2xl bg-black/30 p-4 text-sm font-semibold backdrop-blur-sm">
-            Vào một ô chờ, bấm Sẵn sàng và chờ chủ phòng
-            bấm “Bắt đầu trò chơi”.
+            Khách vào ô chờ và bấm Sẵn sàng. Chủ phòng có thể
+            chơi một mình hoặc bấm “Bắt đầu trò chơi” khi các
+            khách đã sẵn sàng.
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (match.status === "cancelled") {
+    return (
+      <div className="flex min-h-[520px] items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 p-8 text-center">
+        <div className="max-w-xl rounded-3xl border border-white/10 bg-black/25 p-8 shadow-2xl backdrop-blur">
+          <div className="text-7xl">⏹️</div>
+          <h2 className="mt-4 text-3xl font-black">
+            Trận đấu đã dừng
+          </h2>
+          <p className="mt-3 text-gray-300">
+            Chủ phòng đã dừng ván Mini Golf. Phòng chờ đã mở
+            lại; mọi người có thể sắp xếp đội hình và bắt đầu
+            trận mới.
+          </p>
         </div>
       </div>
     );
@@ -1647,6 +2188,7 @@ export default function MiniGolfGame({
           className={`block aspect-[25/14] w-full touch-none ${
             currentPlayer?.player_status === "playing" &&
             !currentPlayer.hole_completed &&
+            !ballIsSinking &&
             !working
               ? "cursor-crosshair"
               : "cursor-default"
@@ -1664,9 +2206,20 @@ export default function MiniGolfGame({
             Bạn đã hoàn thành 9 hố. Hãy chờ những người còn lại.
           </div>
         )}
-        {currentPlayerWaiting && (
+        {showWaitingOverlay && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-950/25 p-5 backdrop-blur-[1px]">
-            <div className="max-w-md rounded-3xl border border-emerald-300/25 bg-slate-950/88 px-6 py-5 text-center shadow-2xl">
+            <div className="relative max-w-md rounded-3xl border border-emerald-300/25 bg-slate-950/88 px-6 py-5 text-center shadow-2xl">
+              <button
+                type="button"
+                onClick={() =>
+                  setDismissedWaitingOverlayKey(waitingOverlayKey)
+                }
+                aria-label="Đóng thông báo để xem người chơi khác"
+                title="Đóng để xem người chơi khác"
+                className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xl font-black text-gray-200 transition hover:bg-white/20 hover:text-white"
+              >
+                ×
+              </button>
               <div className="text-4xl">⛳</div>
               <p className="mt-2 text-xl font-black text-emerald-300">
                 Bạn đã hoàn thành hố {viewedHole}
@@ -1698,6 +2251,15 @@ export default function MiniGolfGame({
                   ),
                 )}
               </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setDismissedWaitingOverlayKey(waitingOverlayKey)
+                }
+                className="mt-5 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-black text-emerald-950 transition hover:bg-emerald-400"
+              >
+                Xem người chơi khác
+              </button>
             </div>
           </div>
         )}

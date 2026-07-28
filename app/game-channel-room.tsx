@@ -551,6 +551,33 @@ export default function GameChannelRoom({
     setWorking(false);
   }
 
+  async function stopGame() {
+    if (
+      !currentPlayer ||
+      currentPlayer.seat_index !== 0 ||
+      working ||
+      summary?.status !== "playing"
+    ) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Dừng trận đang chơi? Kết quả hiện tại sẽ bị hủy và phòng chờ sẽ mở lại.",
+    );
+    if (!confirmed) return;
+
+    setWorking(true);
+    setErrorMessage("");
+    const { error } = await supabase.rpc(
+      "stop_game_channel",
+      { p_channel_id: channelId },
+    );
+
+    if (error) setErrorMessage(error.message);
+    else await loadLobby();
+    setWorking(false);
+  }
+
   async function leaveGame() {
     if (working || summary?.status === "playing") return;
     setWorking(true);
@@ -651,27 +678,34 @@ export default function GameChannelRoom({
 
           {currentPlayer && (
             <>
-              {isRoomHost && (
-                <button
-                  type="button"
-                  onClick={() => void startGame()}
-                  disabled={working || !canStartGame}
-                  title={
-                    isRoomLocked
-                      ? "Trận đấu đang diễn ra"
-                      : !guestPlayers.every(
-                            (player) => player.is_ready,
-                          )
+              {isRoomHost &&
+                (isRoomLocked ? (
+                  <button
+                    type="button"
+                    onClick={() => void stopGame()}
+                    disabled={working}
+                    title="Dừng trận và mở lại phòng chờ"
+                    className="rounded-xl bg-red-600 px-4 py-2.5 font-black text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {working ? "Đang dừng..." : "■ Dừng game"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void startGame()}
+                    disabled={working || !canStartGame}
+                    title={
+                      !guestPlayers.every(
+                        (player) => player.is_ready,
+                      )
                         ? "Tất cả người chơi khác phải sẵn sàng"
                         : "Bắt đầu trò chơi"
-                  }
-                  className="rounded-xl bg-amber-500 px-4 py-2.5 font-black text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  {summary?.status === "playing"
-                    ? "Đang chơi"
-                    : "▶ Bắt đầu trò chơi"}
-                </button>
-              )}
+                    }
+                    className="rounded-xl bg-amber-500 px-4 py-2.5 font-black text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    ▶ Bắt đầu trò chơi
+                  </button>
+                ))}
               {!isRoomHost && !isRoomLocked && (
                 <button
                   type="button"

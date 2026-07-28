@@ -1030,7 +1030,7 @@ begin
     return false;
   end if;
 
-  -- Trình duyệt có thể bị đóng. Khi quá 60 giây, máy chủ tự chốt
+  -- Trình duyệt có thể bị đóng. Khi quá 120 giây, máy chủ tự chốt
   -- hố 12 gậy trong lần đồng bộ tiếp theo để cả phòng không kẹt.
   update public.mini_golf_match_players
   set
@@ -1043,7 +1043,7 @@ begin
   where match_id = p_match_id
     and player_status = 'playing'
     and not hole_completed
-    and hole_started_at <= now() - interval '60 seconds';
+    and hole_started_at <= now() - interval '120 seconds';
 
   select
     count(*),
@@ -1333,7 +1333,7 @@ begin
   end if;
 
   if target_player.hole_started_at >
-    now() - interval '60 seconds' then
+    now() - interval '120 seconds' then
     raise exception 'Hố này vẫn còn thời gian.';
   end if;
 
