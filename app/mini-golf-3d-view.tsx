@@ -86,6 +86,25 @@ type BallObject = {
   >;
 };
 
+type CameraController = {
+  resetBehindBall: () => void;
+  rotate: (direction: -1 | 1) => void;
+  zoom: (direction: -1 | 1) => void;
+};
+
+type CameraGesture =
+  | {
+      mode: "aim";
+      pointerId: number;
+    }
+  | {
+      mode: "orbit";
+      pointerId: number;
+      lastX: number;
+      lastY: number;
+    }
+  | null;
+
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
@@ -331,6 +350,145 @@ function makeGolfBumpTexture(renderer: THREE.WebGLRenderer) {
   return texture;
 }
 
+function makeTurfBumpTexture(
+  renderer: THREE.WebGLRenderer,
+  course: MiniGolfCourse,
+) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 288;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  context.fillStyle = "#858585";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  for (let index = 0; index < 7200; index += 1) {
+    const x = seededNoise(index, course.id * 147.1) * canvas.width;
+    const y = seededNoise(index, course.id * 151.7) * canvas.height;
+    const length =
+      1.2 + seededNoise(index, course.id * 157.3) * 3.4;
+    const brightness =
+      95 + Math.floor(seededNoise(index, course.id * 163.9) * 95);
+    context.strokeStyle = `rgb(${brightness},${brightness},${brightness})`;
+    context.lineWidth = index % 5 === 0 ? 1.25 : 0.7;
+    context.beginPath();
+    context.moveTo(x, y);
+    context.lineTo(
+      x + (seededNoise(index, course.id * 167.2) - 0.5) * 1.5,
+      y - length,
+    );
+    context.stroke();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(2.4, 2.4);
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return texture;
+}
+
+function makeWoodTexture(
+  renderer: THREE.WebGLRenderer,
+  course: MiniGolfCourse,
+) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  const palette =
+    course.theme === "night"
+      ? ["#334a80", "#14285a", "#081638"]
+      : course.theme === "desert"
+        ? ["#f4c76c", "#b56b27", "#6e3514"]
+        : ["#e7c06f", "#a9662e", "#5d2c16"];
+  const gradient = context.createLinearGradient(0, 0, 0, 256);
+  gradient.addColorStop(0, palette[0]);
+  gradient.addColorStop(0.5, palette[1]);
+  gradient.addColorStop(1, palette[2]);
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (let line = 0; line < 58; line += 1) {
+    const y = seededNoise(line, course.id * 173.4) * canvas.height;
+    const offset =
+      (seededNoise(line, course.id * 179.1) - 0.5) * 42;
+    context.strokeStyle =
+      line % 3 === 0
+        ? "rgba(255,239,189,0.23)"
+        : "rgba(59,24,8,0.23)";
+    context.lineWidth = line % 5 === 0 ? 3 : 1.2;
+    context.beginPath();
+    context.moveTo(0, y);
+    context.bezierCurveTo(
+      260,
+      y + offset,
+      760,
+      y - offset,
+      canvas.width,
+      y + offset * 0.25,
+    );
+    context.stroke();
+  }
+
+  for (let knot = 0; knot < 9; knot += 1) {
+    const x = 70 + seededNoise(knot, course.id * 181.6) * 884;
+    const y = 30 + seededNoise(knot, course.id * 191.3) * 196;
+    context.strokeStyle = "rgba(55,19,5,0.32)";
+    context.lineWidth = 4;
+    context.beginPath();
+    context.ellipse(x, y, 22, 9, 0.1, 0, Math.PI * 2);
+    context.stroke();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(3.5, 1);
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return texture;
+}
+
+function makeCloudTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 128;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+
+  const puffs = [
+    [70, 72, 50],
+    [112, 52, 58],
+    [155, 69, 51],
+    [126, 82, 66],
+  ] as const;
+  for (const [x, y, radius] of puffs) {
+    const gradient = context.createRadialGradient(
+      x,
+      y,
+      4,
+      x,
+      y,
+      radius,
+    );
+    gradient.addColorStop(0, "rgba(255,255,255,0.92)");
+    gradient.addColorStop(0.55, "rgba(248,252,255,0.72)");
+    gradient.addColorStop(1, "rgba(235,247,255,0)");
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 function makeLabelSprite(text: string, color: string) {
   const canvas = document.createElement("canvas");
   canvas.width = 512;
@@ -469,6 +627,7 @@ export default function MiniGolf3DView({
   onAimCancel: () => void;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const cameraControllerRef = useRef<CameraController | null>(null);
   const dynamicRef = useRef<DynamicSceneState>({
     players,
     currentPlayer,
@@ -542,9 +701,12 @@ export default function MiniGolf3DView({
     const palette = themePalette(course.theme);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(palette.sky);
-    scene.fog = new THREE.Fog(palette.fog, 17, 38);
+    scene.fog = new THREE.FogExp2(
+      palette.fog,
+      course.theme === "night" ? 0.018 : 0.012,
+    );
 
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.8));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(
       Math.max(1, mount.clientWidth),
       Math.max(1, mount.clientHeight),
@@ -553,18 +715,83 @@ export default function MiniGolf3DView({
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure =
-      course.theme === "night" ? 1.18 : 1.06;
+      course.theme === "night" ? 1.2 : 1.1;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.domElement.style.width = "100%";
     renderer.domElement.style.height = "100%";
     renderer.domElement.style.display = "block";
     renderer.domElement.style.touchAction = "none";
+    renderer.domElement.style.cursor = "grab";
     mount.appendChild(renderer.domElement);
 
-    const camera = new THREE.PerspectiveCamera(41, 1, 0.1, 80);
-    camera.position.set(0, 11.5, 13.2);
-    camera.lookAt(0, 0.3, 0);
+    const courseStart = courseToWorld(course.start);
+    const courseHole = courseToWorld(course.hole);
+    const initialCourseDirection = courseHole
+      .clone()
+      .sub(courseStart)
+      .setY(0)
+      .normalize();
+    const cameraOrbit = {
+      yaw: Math.atan2(
+        -initialCourseDirection.x,
+        -initialCourseDirection.z,
+      ),
+      pitch: 0.34,
+      distance: 5.7,
+      target: courseStart
+        .clone()
+        .add(new THREE.Vector3(0, 0.28, 0)),
+    };
+    const camera = new THREE.PerspectiveCamera(54, 1, 0.08, 120);
+    const cameraLookTarget = cameraOrbit.target.clone();
+    const resetCameraBehindBall = () => {
+      const latest = dynamicRef.current;
+      const focusPoint = latest.currentPlayer
+        ? {
+            x: latest.ballRef.current.x,
+            y: latest.ballRef.current.y,
+          }
+        : course.start;
+      const focus = courseToWorld(focusPoint);
+      const toHole = courseHole.clone().sub(focus).setY(0);
+      if (toHole.lengthSq() < 0.001) {
+        toHole.set(0, 0, -1);
+      } else {
+        toHole.normalize();
+      }
+      cameraOrbit.yaw = Math.atan2(-toHole.x, -toHole.z);
+      cameraOrbit.pitch = 0.34;
+      cameraOrbit.distance = 5.7;
+      cameraOrbit.target.copy(focus).y = GROUND_HEIGHT + 0.28;
+      cameraLookTarget.copy(cameraOrbit.target);
+    };
+    cameraControllerRef.current = {
+      resetBehindBall: resetCameraBehindBall,
+      rotate: (direction) => {
+        cameraOrbit.yaw += direction * Math.PI * 0.16;
+      },
+      zoom: (direction) => {
+        cameraOrbit.distance = clamp(
+          cameraOrbit.distance + direction * 0.75,
+          3.1,
+          10.5,
+        );
+      },
+    };
+    resetCameraBehindBall();
+    const initialHorizontalDistance =
+      Math.cos(cameraOrbit.pitch) * cameraOrbit.distance;
+    camera.position.set(
+      cameraOrbit.target.x +
+        Math.sin(cameraOrbit.yaw) * initialHorizontalDistance,
+      cameraOrbit.target.y +
+        0.72 +
+        Math.sin(cameraOrbit.pitch) * cameraOrbit.distance,
+      cameraOrbit.target.z +
+        Math.cos(cameraOrbit.yaw) * initialHorizontalDistance,
+    );
+    camera.lookAt(cameraLookTarget);
 
     const hemisphere = new THREE.HemisphereLight(
       palette.ambient,
@@ -600,6 +827,98 @@ export default function MiniGolf3DView({
       scene.add(moonLight);
     }
 
+    const fillLight = new THREE.DirectionalLight(
+      course.theme === "night" ? "#725cff" : "#91d8ff",
+      course.theme === "night" ? 0.85 : 0.62,
+    );
+    fillLight.position.set(8, 7, -10);
+    scene.add(fillLight);
+
+    const skyTop =
+      course.theme === "night"
+        ? "#07102e"
+        : course.theme === "desert"
+          ? "#278bd2"
+          : "#1677c8";
+    const skyHorizon =
+      course.theme === "night"
+        ? "#4b3a82"
+        : course.theme === "desert"
+          ? "#ffd08a"
+          : "#c9efff";
+    const skyDome = new THREE.Mesh(
+      new THREE.SphereGeometry(72, 40, 22),
+      new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        depthWrite: false,
+        fog: false,
+        uniforms: {
+          topColor: { value: new THREE.Color(skyTop) },
+          horizonColor: { value: new THREE.Color(skyHorizon) },
+          exponent: { value: course.theme === "night" ? 0.7 : 0.9 },
+        },
+        vertexShader: `
+          varying vec3 vWorldPosition;
+          void main() {
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldPosition = worldPosition.xyz;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 topColor;
+          uniform vec3 horizonColor;
+          uniform float exponent;
+          varying vec3 vWorldPosition;
+          void main() {
+            float heightMix = pow(max(normalize(vWorldPosition).y, 0.0), exponent);
+            gl_FragColor = vec4(mix(horizonColor, topColor, heightMix), 1.0);
+          }
+        `,
+      }),
+    );
+    scene.add(skyDome);
+
+    const sun = new THREE.Mesh(
+      new THREE.SphereGeometry(course.theme === "night" ? 1.25 : 1.8, 32, 18),
+      new THREE.MeshBasicMaterial({
+        color: course.theme === "night" ? "#d9f4ff" : "#fff3bb",
+        fog: false,
+      }),
+    );
+    sun.position.set(-25, course.theme === "night" ? 19 : 24, -38);
+    scene.add(sun);
+
+    const cloudTexture =
+      course.theme === "night" ? null : makeCloudTexture();
+    if (cloudTexture) {
+      for (let cloudIndex = 0; cloudIndex < 11; cloudIndex += 1) {
+        const cloud = new THREE.Sprite(
+          new THREE.SpriteMaterial({
+            map: cloudTexture,
+            transparent: true,
+            opacity:
+              0.4 + seededNoise(cloudIndex, course.id * 197.5) * 0.3,
+            depthWrite: false,
+            fog: true,
+          }),
+        );
+        const angle =
+          seededNoise(cloudIndex, course.id * 199.9) * Math.PI * 2;
+        const radius =
+          25 + seededNoise(cloudIndex, course.id * 211.2) * 17;
+        cloud.position.set(
+          Math.sin(angle) * radius,
+          8 + seededNoise(cloudIndex, course.id * 223.4) * 7,
+          Math.cos(angle) * radius,
+        );
+        const scale =
+          5.5 + seededNoise(cloudIndex, course.id * 227.8) * 6;
+        cloud.scale.set(scale * 1.9, scale, 1);
+        scene.add(cloud);
+      }
+    }
+
     const landscapeMaterial = new THREE.MeshStandardMaterial({
       color: palette.ground,
       roughness: 1,
@@ -613,10 +932,49 @@ export default function MiniGolf3DView({
     landscape.receiveShadow = true;
     scene.add(landscape);
 
-    const borderMaterial = new THREE.MeshStandardMaterial({
+    const distantHillMaterial = new THREE.MeshStandardMaterial({
+      color:
+        course.theme === "desert"
+          ? "#8f6533"
+          : course.theme === "night"
+            ? "#132a54"
+            : "#245b3f",
+      roughness: 1,
+      flatShading: true,
+    });
+    for (let hillIndex = 0; hillIndex < 16; hillIndex += 1) {
+      const angle = (hillIndex / 16) * Math.PI * 2;
+      const radius =
+        18 + seededNoise(hillIndex, course.id * 229.4) * 7;
+      const height =
+        3.4 + seededNoise(hillIndex, course.id * 233.7) * 5.2;
+      const hill = new THREE.Mesh(
+        new THREE.ConeGeometry(
+          3.2 + height * 0.45,
+          height,
+          7,
+        ),
+        distantHillMaterial,
+      );
+      hill.position.set(
+        Math.sin(angle) * radius,
+        -0.65 + height / 2,
+        Math.cos(angle) * radius,
+      );
+      hill.rotation.y =
+        seededNoise(hillIndex, course.id * 239.1) * Math.PI;
+      hill.receiveShadow = true;
+      scene.add(hill);
+    }
+
+    const woodTexture = makeWoodTexture(renderer, course);
+    const borderMaterial = new THREE.MeshPhysicalMaterial({
       color: palette.border,
-      roughness: 0.48,
+      map: woodTexture,
+      roughness: 0.38,
       metalness: course.theme === "night" ? 0.42 : 0.04,
+      clearcoat: 0.42,
+      clearcoatRoughness: 0.32,
     });
     const borderDarkMaterial = new THREE.MeshStandardMaterial({
       color: palette.borderDark,
@@ -635,6 +993,7 @@ export default function MiniGolf3DView({
     );
 
     const turfTexture = makeTurfTexture(renderer, course);
+    const turfBumpTexture = makeTurfBumpTexture(renderer, course);
     const turfGeometry = new THREE.PlaneGeometry(
       WORLD_WIDTH,
       WORLD_DEPTH,
@@ -663,11 +1022,16 @@ export default function MiniGolf3DView({
       turfPositions.setY(index, GROUND_HEIGHT + bump);
     }
     turfGeometry.computeVertexNormals();
-    const turfMaterial = new THREE.MeshStandardMaterial({
+    const turfMaterial = new THREE.MeshPhysicalMaterial({
       color: "#ffffff",
       map: turfTexture,
-      roughness: 0.93,
+      bumpMap: turfBumpTexture,
+      bumpScale: 0.045,
+      roughness: 0.88,
       metalness: 0,
+      sheen: 0.28,
+      sheenColor: new THREE.Color(palette.grassLight),
+      sheenRoughness: 0.86,
     });
     const turf = new THREE.Mesh(turfGeometry, turfMaterial);
     turf.receiveShadow = true;
@@ -820,10 +1184,24 @@ export default function MiniGolf3DView({
       });
     }
 
-    const wallMaterial = new THREE.MeshStandardMaterial({
+    const wallMaterial = new THREE.MeshPhysicalMaterial({
       color: course.theme === "night" ? "#3d5b89" : "#65758b",
-      roughness: 0.3,
-      metalness: 0.7,
+      roughness: 0.24,
+      metalness: 0.78,
+      clearcoat: 0.5,
+      clearcoatRoughness: 0.2,
+    });
+    const wallTopMaterial = new THREE.MeshPhysicalMaterial({
+      color: course.theme === "night" ? "#7c9ee0" : "#b8c9dc",
+      roughness: 0.2,
+      metalness: 0.82,
+      clearcoat: 0.7,
+    });
+    const boltGeometry = new THREE.SphereGeometry(0.055, 14, 8);
+    const boltMaterial = new THREE.MeshStandardMaterial({
+      color: "#e8f1fa",
+      roughness: 0.18,
+      metalness: 0.92,
     });
     for (const obstacle of course.obstacles) {
       const width = obstacle.width * WORLD_WIDTH;
@@ -852,6 +1230,31 @@ export default function MiniGolf3DView({
         }),
       );
       mesh.add(edge);
+
+      const topPanel = addBox(
+        scene,
+        Math.max(0.12, width - 0.08),
+        0.065,
+        Math.max(0.12, depth - 0.08),
+        center.x,
+        GROUND_HEIGHT + height + 0.015,
+        center.z,
+        wallTopMaterial,
+      );
+      topPanel.castShadow = true;
+      for (const xDirection of [-1, 1]) {
+        for (const zDirection of [-1, 1]) {
+          const bolt = new THREE.Mesh(boltGeometry, boltMaterial);
+          bolt.scale.y = 0.45;
+          bolt.position.set(
+            center.x + xDirection * Math.max(0, width / 2 - 0.12),
+            GROUND_HEIGHT + height + 0.065,
+            center.z + zDirection * Math.max(0, depth / 2 - 0.12),
+          );
+          bolt.castShadow = true;
+          scene.add(bolt);
+        }
+      }
     }
 
     const rockMaterial = new THREE.MeshStandardMaterial({
@@ -1006,43 +1409,79 @@ export default function MiniGolf3DView({
 
     const treeTrunkMaterial = new THREE.MeshStandardMaterial({
       color: "#754416",
-      roughness: 1,
+      roughness: 0.94,
+      bumpScale: 0.04,
     });
-    const leafMaterial = new THREE.MeshStandardMaterial({
-      color:
-        course.theme === "desert"
-          ? "#7a9b32"
-          : course.theme === "night"
-            ? "#0b7d68"
-            : "#16874b",
-      roughness: 0.92,
-    });
-    for (let index = 0; index < 22; index += 1) {
+    const leafBase =
+      course.theme === "desert"
+        ? new THREE.Color("#829f32")
+        : course.theme === "night"
+          ? new THREE.Color("#087966")
+          : new THREE.Color("#16874b");
+    const leafMaterials = [-0.07, 0.03, 0.11].map(
+      (lightnessOffset) =>
+        new THREE.MeshStandardMaterial({
+          color: leafBase.clone().offsetHSL(0, 0, lightnessOffset),
+          roughness: 0.82,
+          flatShading: true,
+        }),
+    );
+    for (let index = 0; index < 26; index += 1) {
       const side = index % 2 === 0 ? -1 : 1;
       const x =
         side *
-        (10.2 + seededNoise(index, course.id * 113.7) * 3.4);
+        (10.4 + seededNoise(index, course.id * 113.7) * 4.6);
       const z =
-        -7.5 +
-        seededNoise(index, course.id * 127.3) * 15;
+        -9 +
+        seededNoise(index, course.id * 127.3) * 18;
       const height =
-        0.7 + seededNoise(index, course.id * 131.9) * 1.1;
+        1 + seededNoise(index, course.id * 131.9) * 1.8;
       const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.08, 0.12, height, 8),
+        new THREE.CylinderGeometry(
+          0.08 + height * 0.018,
+          0.14 + height * 0.022,
+          height,
+          10,
+        ),
         treeTrunkMaterial,
       );
       trunk.position.set(x, -0.25 + height / 2, z);
-      trunk.castShadow = true;
+      trunk.rotation.z =
+        (seededNoise(index, course.id * 137.1) - 0.5) * 0.08;
+      trunk.receiveShadow = true;
       scene.add(trunk);
-      const crown = new THREE.Mesh(
-        new THREE.ConeGeometry(0.5 + height * 0.16, 1.35, 10),
-        leafMaterial,
-      );
-      crown.position.set(x, -0.1 + height + 0.48, z);
-      crown.rotation.y =
-        seededNoise(index, course.id * 139.1) * Math.PI;
-      crown.castShadow = true;
-      scene.add(crown);
+
+      for (let cluster = 0; cluster < 3; cluster += 1) {
+        const crownRadius =
+          0.48 +
+          height * 0.12 +
+          seededNoise(index + cluster * 31, course.id * 139.1) *
+            0.22;
+        const crown = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(crownRadius, 1),
+          leafMaterials[cluster],
+        );
+        crown.scale.set(
+          1.05,
+          0.9 + cluster * 0.07,
+          0.92,
+        );
+        crown.position.set(
+          x + (cluster - 1) * crownRadius * 0.58,
+          -0.18 + height + (cluster % 2) * crownRadius * 0.42,
+          z +
+            (seededNoise(index + cluster, course.id * 143.8) - 0.5) *
+              crownRadius,
+        );
+        crown.rotation.set(
+          seededNoise(index, cluster + 1) * 0.3,
+          seededNoise(index, course.id * 149.2 + cluster) *
+            Math.PI,
+          0,
+        );
+        crown.receiveShadow = true;
+        scene.add(crown);
+      }
     }
 
     const bumpTexture = makeGolfBumpTexture(renderer);
@@ -1067,35 +1506,88 @@ export default function MiniGolf3DView({
     trail.visible = false;
     scene.add(trail);
 
-    const aimMaterial = new THREE.LineDashedMaterial({
-      color: "#ffffff",
-      dashSize: 0.32,
-      gapSize: 0.18,
-      transparent: true,
-      opacity: 0.95,
-    });
-    const aimGeometry = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(),
-      new THREE.Vector3(),
-    ]);
-    const aimLine = new THREE.Line(aimGeometry, aimMaterial);
-    aimLine.computeLineDistances();
-    aimLine.visible = false;
-    scene.add(aimLine);
+    const aimGuide = new THREE.Group();
+    aimGuide.visible = false;
+    scene.add(aimGuide);
 
-    const arrowMaterial = new THREE.MeshStandardMaterial({
-      color: "#ffffff",
-      emissive: "#ffffff",
-      emissiveIntensity: 0.35,
-      roughness: 0.4,
+    const aimShaftMaterial = new THREE.MeshBasicMaterial({
+      color: "#48f5c6",
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const aimGlowMaterial = new THREE.MeshBasicMaterial({
+      color: "#48f5c6",
+      transparent: true,
+      opacity: 0.2,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const aimShaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.045, 0.075, 1, 18),
+      aimShaftMaterial,
+    );
+    aimShaft.rotation.x = Math.PI / 2;
+    aimGuide.add(aimShaft);
+
+    const aimGlow = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1, 0.15, 1, 18),
+      aimGlowMaterial,
+    );
+    aimGlow.rotation.x = Math.PI / 2;
+    aimGuide.add(aimGlow);
+
+    const arrowMaterial = new THREE.MeshPhysicalMaterial({
+      color: "#48f5c6",
+      emissive: "#48f5c6",
+      emissiveIntensity: 1.8,
+      roughness: 0.15,
+      metalness: 0.12,
+      clearcoat: 1,
+      transparent: true,
+      opacity: 0.98,
     });
     const aimArrow = new THREE.Mesh(
-      new THREE.ConeGeometry(0.18, 0.56, 18),
+      new THREE.ConeGeometry(0.3, 0.72, 5),
       arrowMaterial,
     );
-    aimArrow.visible = false;
-    aimArrow.castShadow = true;
-    scene.add(aimArrow);
+    aimArrow.rotation.x = Math.PI / 2;
+    aimGuide.add(aimArrow);
+
+    const aimHaloMaterial = new THREE.MeshBasicMaterial({
+      color: "#48f5c6",
+      transparent: true,
+      opacity: 0.74,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const aimHalo = new THREE.Mesh(
+      new THREE.TorusGeometry(0.34, 0.035, 12, 64),
+      aimHaloMaterial,
+    );
+    aimHalo.rotation.x = -Math.PI / 2;
+    aimHalo.position.y = 0.025;
+    aimGuide.add(aimHalo);
+
+    const aimPulseMarkers: THREE.Mesh<
+      THREE.SphereGeometry,
+      THREE.MeshBasicMaterial
+    >[] = [];
+    const markerGeometry = new THREE.SphereGeometry(0.075, 16, 10);
+    for (let markerIndex = 0; markerIndex < 9; markerIndex += 1) {
+      const markerMaterial = new THREE.MeshBasicMaterial({
+        color: "#48f5c6",
+        transparent: true,
+        opacity: 0.72,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+      marker.scale.set(1, 0.45, 1);
+      aimGuide.add(marker);
+      aimPulseMarkers.push(marker);
+    }
 
     const raycaster = new THREE.Raycaster();
     const groundPlane = new THREE.Plane(
@@ -1103,7 +1595,12 @@ export default function MiniGolf3DView({
       -GROUND_HEIGHT,
     );
     const intersection = new THREE.Vector3();
-    let dragPointerId: number | null = null;
+    let gesture: CameraGesture = null;
+    const pointerPositions = new Map<
+      number,
+      { x: number; y: number }
+    >();
+    let pinchDistance: number | null = null;
 
     const pointerToCourse = (event: PointerEvent) => {
       const bounds = renderer.domElement.getBoundingClientRect();
@@ -1119,35 +1616,178 @@ export default function MiniGolf3DView({
       return hit ? worldToCourse(intersection) : null;
     };
 
+    const distanceFromCurrentBall = (point: MiniGolfPoint) => {
+      const latest = dynamicRef.current;
+      return Math.hypot(
+        (point.x - latest.ballRef.current.x) * 1000,
+        (point.y - latest.ballRef.current.y) * 560,
+      );
+    };
+
+    const currentPinchDistance = () => {
+      const positions = [...pointerPositions.values()];
+      if (positions.length < 2) return null;
+      return Math.hypot(
+        positions[0].x - positions[1].x,
+        positions[0].y - positions[1].y,
+      );
+    };
+
     const handlePointerDown = (event: PointerEvent) => {
       const latest = dynamicRef.current;
-      if (!latest.interactive) return;
-      const point = pointerToCourse(event);
-      if (!point) return;
-      dragPointerId = event.pointerId;
+      event.preventDefault();
+      pointerPositions.set(event.pointerId, {
+        x: event.clientX,
+        y: event.clientY,
+      });
       renderer.domElement.setPointerCapture(event.pointerId);
-      latest.onAimStart(point);
+
+      if (pointerPositions.size >= 2) {
+        if (gesture?.mode === "aim") {
+          latest.onAimCancel();
+        }
+        gesture = null;
+        pinchDistance = currentPinchDistance();
+        renderer.domElement.style.cursor = "ns-resize";
+        return;
+      }
+
+      const point = pointerToCourse(event);
+      const motion = latest.ballRef.current;
+      const canBeginAim =
+        event.button === 0 &&
+        latest.interactive &&
+        !motion.moving &&
+        !motion.sinking &&
+        point !== null &&
+        distanceFromCurrentBall(point) <= 54;
+
+      if (canBeginAim && point) {
+        gesture = {
+          mode: "aim",
+          pointerId: event.pointerId,
+        };
+        renderer.domElement.style.cursor = "crosshair";
+        latest.onAimStart(point);
+        return;
+      }
+
+      gesture = {
+        mode: "orbit",
+        pointerId: event.pointerId,
+        lastX: event.clientX,
+        lastY: event.clientY,
+      };
+      renderer.domElement.style.cursor = "grabbing";
     };
     const handlePointerMove = (event: PointerEvent) => {
-      if (dragPointerId !== event.pointerId) return;
-      const point = pointerToCourse(event);
-      if (point) dynamicRef.current.onAimMove(point);
+      if (pointerPositions.has(event.pointerId)) {
+        pointerPositions.set(event.pointerId, {
+          x: event.clientX,
+          y: event.clientY,
+        });
+      }
+
+      if (pointerPositions.size >= 2) {
+        const nextPinchDistance = currentPinchDistance();
+        if (
+          nextPinchDistance !== null &&
+          pinchDistance !== null
+        ) {
+          cameraOrbit.distance = clamp(
+            cameraOrbit.distance -
+              (nextPinchDistance - pinchDistance) * 0.018,
+            3.1,
+            10.5,
+          );
+        }
+        pinchDistance = nextPinchDistance;
+        return;
+      }
+
+      if (gesture?.pointerId === event.pointerId) {
+        if (gesture.mode === "aim") {
+          const point = pointerToCourse(event);
+          if (point) dynamicRef.current.onAimMove(point);
+          return;
+        }
+
+        const deltaX = event.clientX - gesture.lastX;
+        const deltaY = event.clientY - gesture.lastY;
+        gesture.lastX = event.clientX;
+        gesture.lastY = event.clientY;
+        cameraOrbit.yaw -= deltaX * 0.008;
+        cameraOrbit.pitch = clamp(
+          cameraOrbit.pitch - deltaY * 0.006,
+          0.18,
+          1.08,
+        );
+        return;
+      }
+
+      if (event.pointerType === "mouse") {
+        const point = pointerToCourse(event);
+        const canAim =
+          point !== null &&
+          dynamicRef.current.interactive &&
+          !dynamicRef.current.ballRef.current.moving &&
+          distanceFromCurrentBall(point) <= 54;
+        renderer.domElement.style.cursor = canAim
+          ? "crosshair"
+          : "grab";
+      }
     };
     const handlePointerUp = (event: PointerEvent) => {
-      if (dragPointerId !== event.pointerId) return;
-      const point = pointerToCourse(event);
-      if (point) dynamicRef.current.onAimEnd(point);
-      dragPointerId = null;
+      if (
+        gesture?.mode === "aim" &&
+        gesture.pointerId === event.pointerId
+      ) {
+        const point = pointerToCourse(event);
+        if (point) dynamicRef.current.onAimEnd(point);
+      }
+      if (gesture?.pointerId === event.pointerId) {
+        gesture = null;
+      }
+      pointerPositions.delete(event.pointerId);
+      pinchDistance =
+        pointerPositions.size >= 2
+          ? currentPinchDistance()
+          : null;
       if (
         renderer.domElement.hasPointerCapture(event.pointerId)
       ) {
         renderer.domElement.releasePointerCapture(event.pointerId);
       }
+      renderer.domElement.style.cursor = "grab";
     };
     const handlePointerCancel = (event: PointerEvent) => {
-      if (dragPointerId !== event.pointerId) return;
-      dragPointerId = null;
-      dynamicRef.current.onAimCancel();
+      if (
+        gesture?.mode === "aim" &&
+        gesture.pointerId === event.pointerId
+      ) {
+        dynamicRef.current.onAimCancel();
+      }
+      if (gesture?.pointerId === event.pointerId) {
+        gesture = null;
+      }
+      pointerPositions.delete(event.pointerId);
+      pinchDistance = null;
+      renderer.domElement.style.cursor = "grab";
+    };
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      cameraOrbit.distance = clamp(
+        cameraOrbit.distance + Math.sign(event.deltaY) * 0.55,
+        3.1,
+        10.5,
+      );
+    };
+    const handleDoubleClick = (event: MouseEvent) => {
+      event.preventDefault();
+      resetCameraBehindBall();
+    };
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
     };
     renderer.domElement.addEventListener(
       "pointerdown",
@@ -1165,6 +1805,17 @@ export default function MiniGolf3DView({
       "pointercancel",
       handlePointerCancel,
     );
+    renderer.domElement.addEventListener("wheel", handleWheel, {
+      passive: false,
+    });
+    renderer.domElement.addEventListener(
+      "dblclick",
+      handleDoubleClick,
+    );
+    renderer.domElement.addEventListener(
+      "contextmenu",
+      handleContextMenu,
+    );
 
     const resize = () => {
       const width = Math.max(1, mount.clientWidth);
@@ -1179,9 +1830,21 @@ export default function MiniGolf3DView({
 
     let frame = 0;
     const startedAt = performance.now();
+    let lastFrameAt = startedAt;
+    const aimColor = new THREE.Color();
+    const desiredCameraTarget = new THREE.Vector3();
+    const desiredCameraPosition = new THREE.Vector3();
+    const cameraFocus = new THREE.Vector3();
+    const cameraLookAhead = new THREE.Vector3();
     const animate = (time: number) => {
       const latest = dynamicRef.current;
       const elapsed = (time - startedAt) / 1000;
+      const frameDelta = clamp(
+        (time - lastFrameAt) / 1000,
+        0.001,
+        0.05,
+      );
+      lastFrameAt = time;
 
       for (const water of waterMeshes) {
         const positions = water.mesh.geometry.attributes
@@ -1333,33 +1996,131 @@ export default function MiniGolf3DView({
         if (direction.lengthSq() > 0.0001) {
           direction.normalize();
           const start = courseToWorld(latest.aimOrigin);
-          start.y = GROUND_HEIGHT + 0.25;
-          const end = start
-            .clone()
-            .add(direction.clone().multiplyScalar(2.2 + power * 4.6));
-          aimGeometry.setFromPoints([start, end]);
-          aimLine.computeLineDistances();
-          const color =
-            power > 0.75
-              ? new THREE.Color("#ff3b30")
-              : power > 0.4
-                ? new THREE.Color("#ffd43b")
-                : new THREE.Color("#ffffff");
-          aimMaterial.color.copy(color);
-          arrowMaterial.color.copy(color);
-          arrowMaterial.emissive.copy(color);
-          aimLine.visible = true;
-          aimArrow.visible = true;
-          aimArrow.position.copy(end);
-          aimArrow.quaternion.setFromUnitVectors(
-            new THREE.Vector3(0, 1, 0),
-            direction,
+          start.y = GROUND_HEIGHT + 0.28;
+          const guideLength = 2.35 + power * 5.25;
+          aimColor.setHSL(
+            0.36 * (1 - power),
+            0.96,
+            power > 0.78 ? 0.58 : 0.54,
           );
+          aimGuide.visible = true;
+          aimGuide.position.copy(start);
+          aimGuide.rotation.y = Math.atan2(
+            direction.x,
+            direction.z,
+          );
+          aimShaft.position.set(0, 0.035, guideLength / 2 + 0.18);
+          aimShaft.scale.set(1, guideLength - 0.35, 1);
+          aimGlow.position.copy(aimShaft.position);
+          aimGlow.scale.set(
+            1 + Math.sin(elapsed * 7) * 0.08,
+            guideLength - 0.28,
+            1 + Math.sin(elapsed * 7) * 0.08,
+          );
+          aimArrow.position.set(0, 0.045, guideLength + 0.46);
+          aimArrow.scale.setScalar(0.88 + power * 0.42);
+          aimHalo.scale.setScalar(
+            1 + Math.sin(elapsed * 6) * 0.12 + power * 0.18,
+          );
+          aimHalo.rotation.z = elapsed * 0.7;
+
+          aimShaftMaterial.color.copy(aimColor);
+          aimGlowMaterial.color.copy(aimColor);
+          arrowMaterial.color.copy(aimColor);
+          arrowMaterial.emissive.copy(aimColor);
+          aimHaloMaterial.color.copy(aimColor);
+
+          const visibleMarkerCount = Math.ceil(3 + power * 6);
+          for (
+            let markerIndex = 0;
+            markerIndex < aimPulseMarkers.length;
+            markerIndex += 1
+          ) {
+            const marker = aimPulseMarkers[markerIndex];
+            marker.visible = markerIndex < visibleMarkerCount;
+            marker.position.set(
+              0,
+              0.035,
+              0.72 +
+                (markerIndex / Math.max(1, visibleMarkerCount - 1)) *
+                  Math.max(0.2, guideLength - 1.05),
+            );
+            const pulse =
+              0.52 +
+              Math.sin(elapsed * 8 - markerIndex * 0.85) * 0.34;
+            marker.scale.setScalar(0.72 + pulse * 0.45);
+            marker.scale.y *= 0.42;
+            marker.material.color.copy(aimColor);
+            marker.material.opacity = clamp(pulse, 0.2, 0.9);
+          }
+        } else {
+          aimGuide.visible = false;
         }
       } else {
-        aimLine.visible = false;
-        aimArrow.visible = false;
+        aimGuide.visible = false;
       }
+
+      const cameraPoint =
+        latest.currentPlayer &&
+        latest.currentPlayer.current_hole === latest.viewedHole
+          ? {
+              x: motion.x,
+              y: motion.y,
+            }
+          : visiblePlayers.length > 0
+            ? {
+                x:
+                  visiblePlayers[0].ball_x ??
+                  course.start.x,
+                y:
+                  visiblePlayers[0].ball_y ??
+                  course.start.y,
+              }
+            : course.start;
+      desiredCameraTarget.copy(courseToWorld(cameraPoint));
+      desiredCameraTarget.y = GROUND_HEIGHT + 0.3;
+      cameraLookAhead.set(0, 0, 0);
+      if (
+        latest.currentPlayer &&
+        motion.moving &&
+        Math.hypot(motion.vx, motion.vy) > 0.003
+      ) {
+        cameraLookAhead
+          .set(
+            motion.vx * WORLD_WIDTH,
+            0,
+            motion.vy * WORLD_DEPTH,
+          )
+          .normalize()
+          .multiplyScalar(1.05);
+      }
+      cameraOrbit.target.lerp(
+        desiredCameraTarget,
+        1 - Math.exp(-frameDelta * 8.5),
+      );
+      cameraFocus
+        .copy(cameraOrbit.target)
+        .add(cameraLookAhead);
+      cameraLookTarget.lerp(
+        cameraFocus,
+        1 - Math.exp(-frameDelta * 6.5),
+      );
+      const horizontalDistance =
+        Math.cos(cameraOrbit.pitch) * cameraOrbit.distance;
+      desiredCameraPosition.set(
+        cameraOrbit.target.x +
+          Math.sin(cameraOrbit.yaw) * horizontalDistance,
+        cameraOrbit.target.y +
+          0.72 +
+          Math.sin(cameraOrbit.pitch) * cameraOrbit.distance,
+        cameraOrbit.target.z +
+          Math.cos(cameraOrbit.yaw) * horizontalDistance,
+      );
+      camera.position.lerp(
+        desiredCameraPosition,
+        1 - Math.exp(-frameDelta * 7.5),
+      );
+      camera.lookAt(cameraLookTarget);
 
       flag.rotation.y = Math.sin(elapsed * 1.4) * 0.08;
       renderer.render(scene, camera);
@@ -1388,6 +2149,16 @@ export default function MiniGolf3DView({
         "pointercancel",
         handlePointerCancel,
       );
+      renderer.domElement.removeEventListener("wheel", handleWheel);
+      renderer.domElement.removeEventListener(
+        "dblclick",
+        handleDoubleClick,
+      );
+      renderer.domElement.removeEventListener(
+        "contextmenu",
+        handleContextMenu,
+      );
+      cameraControllerRef.current = null;
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {
           object.geometry.dispose();
@@ -1409,14 +2180,13 @@ export default function MiniGolf3DView({
           object.material.dispose();
         }
       });
-      aimGeometry.dispose();
-      aimMaterial.dispose();
       trailGeometry.dispose();
       (
         trail.material as THREE.PointsMaterial
       ).dispose();
       bumpTexture?.dispose();
       turfTexture?.dispose();
+      turfBumpTexture?.dispose();
       sandTexture?.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
@@ -1427,12 +2197,80 @@ export default function MiniGolf3DView({
   }, [course]);
 
   return (
-    <div
-      ref={mountRef}
-      className={`aspect-[25/14] w-full overflow-hidden bg-slate-950 ${
-        interactive ? "cursor-crosshair" : "cursor-default"
-      }`}
-      aria-label={`Sân Mini Golf 3D hố ${viewedHole}: ${course.name}`}
-    />
+    <div className="relative aspect-[25/14] w-full overflow-hidden bg-slate-950">
+      <div
+        ref={mountRef}
+        className="absolute inset-0"
+        aria-label={`Sân Mini Golf 3D góc nhìn thứ ba, hố ${viewedHole}: ${course.name}`}
+      />
+
+      <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-full border border-cyan-200/20 bg-slate-950/72 px-3 py-1.5 text-[11px] font-black text-cyan-100 shadow-lg backdrop-blur-md">
+        🎥 GÓC NHÌN THỨ 3
+      </div>
+
+      <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex items-end gap-2">
+        <div className="pointer-events-auto flex items-center gap-1 rounded-2xl border border-white/15 bg-slate-950/78 p-1.5 shadow-2xl backdrop-blur-md">
+          <button
+            type="button"
+            onClick={() =>
+              cameraControllerRef.current?.rotate(-1)
+            }
+            title="Xoay camera sang trái"
+            aria-label="Xoay camera sang trái"
+            className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-base text-white transition hover:bg-cyan-400/25"
+          >
+            ↶
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              cameraControllerRef.current?.resetBehindBall()
+            }
+            title="Đặt camera lại phía sau bóng"
+            aria-label="Đặt camera lại phía sau bóng"
+            className="flex h-8 items-center justify-center gap-1 rounded-xl bg-cyan-400/20 px-2.5 text-[11px] font-black text-cyan-100 transition hover:bg-cyan-400/35"
+          >
+            🎥 SAU BÓNG
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              cameraControllerRef.current?.rotate(1)
+            }
+            title="Xoay camera sang phải"
+            aria-label="Xoay camera sang phải"
+            className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-base text-white transition hover:bg-cyan-400/25"
+          >
+            ↷
+          </button>
+          <span className="mx-0.5 h-5 w-px bg-white/10" />
+          <button
+            type="button"
+            onClick={() =>
+              cameraControllerRef.current?.zoom(-1)
+            }
+            title="Phóng gần camera"
+            aria-label="Phóng gần camera"
+            className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-sm font-black text-white transition hover:bg-cyan-400/25"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              cameraControllerRef.current?.zoom(1)
+            }
+            title="Thu xa camera"
+            aria-label="Thu xa camera"
+            className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-sm font-black text-white transition hover:bg-cyan-400/25"
+          >
+            −
+          </button>
+        </div>
+        <div className="hidden rounded-xl border border-white/10 bg-slate-950/68 px-3 py-2 text-[10px] font-bold text-slate-200 backdrop-blur-md lg:block">
+          Kéo vùng trống để xoay · Cuộn/chụm để zoom
+        </div>
+      </div>
+    </div>
   );
 }
